@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block title %}Bills & Subscriptions - Finance Tracker{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <h1>📅 Bills & Subscriptions</h1>
+    <button class="btn" onclick="openModal('createBillModal')">+ Add Bill</button>
+</div>
+
+<!-- Bills Overview -->
+<div class="card">
+    <h2>Active Bills</h2>
+    {% if bills %}
+    <table>
+        <thead>
+            <tr>
+                <th>Bill Name</th>
+                <th>Amount</th>
+                <th>Frequency</th>
+                <th>Next Due</th>
+                <th>Category</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for bill in bills %}
+            <tr>
+                <td><strong>{{ bill['name'] }}</strong></td>
+                <td>${{ "%.2f"|format(bill['amount']) }}</td>
+                <td><span class="badge badge-info">{{ bill['frequency'].upper() }}</span></td>
+                <td>{{ bill['next_due_date'] }}</td>
+                <td>{{ bill['category'] }}</td>
+                <td>
+                    <button class="btn" style="font-size: 0.75rem; padding: 0.25rem 0.75rem; background: #48bb78;"
+                            onclick="openPayModal({{ bill['id'] }}, '{{ bill['name'] }}', {{ bill['amount'] }})">
+                        Mark Paid
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: #718096;">No bills tracked yet. <a href="#" onclick="openModal('createBillModal'); return false;">Add your first bill</a></p>
+    {% endif %}
+</div>
+
+<!-- Create Bill Modal -->
+<div id="createBillModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="background: white; max-width: 500px; margin: 5rem auto; padding: 2rem; border-radius: 8px;">
+        <span onclick="closeModal('createBillModal')" style="float: right; font-size: 1.5rem; cursor: pointer; color: #a0aec0;">&times;</span>
+        <h2>Add New Bill</h2>
+        
+        <form action="/bills/create" method="POST">
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Bill Name</label>
+                <input type="text" name="name" placeholder="e.g., Netflix, Electric Bill" required
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Amount ($)</label>
+                <input type="number" name="amount" step="0.01" placeholder="15.99" required
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Frequency</label>
+                <select name="frequency" required style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+                    <option value="monthly">Monthly</option>
+                    <option value="quarterly">Quarterly (every 3 months)</option>
+                    <option value="yearly">Yearly</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="biweekly">Biweekly (every 2 weeks)</option>
+                </select>
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Due Day</label>
+                <input type="number" name="due_day" min="1" max="31" placeholder="5" required
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+                <small style="color: #718096; display: block; margin-top: 0.25rem;">
+                    For monthly bills, enter day of month (1-31).
+                </small>
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Category</label>
+                <select name="category" style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+                    <option value="utilities">Utilities</option>
+                    <option value="entertainment">Entertainment</option>
+                    <option value="transportation">Transportation</option>
+                    <option value="health">Health & Fitness</option>
+                    <option value="housing">Housing</option>
+                    <option value="insurance">Insurance</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+            
+            <button type="submit" class="btn">Add Bill</button>
+        </form>
+    </div>
+</div>
+
+<!-- Pay Bill Modal -->
+<div id="payBillModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="background: white; max-width: 500px; margin: 5rem auto; padding: 2rem; border-radius: 8px;">
+        <span onclick="closeModal('payBillModal')" style="float: right; font-size: 1.5rem; cursor: pointer; color: #a0aec0;">&times;</span>
+        <h2>Mark Bill as Paid</h2>
+        <p style="color: #718096; margin-bottom: 1rem;">Bill: <strong id="pay-bill-name"></strong></p>
+        
+        <form id="payBillForm" method="POST">
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Payment Date</label>
+                <input type="date" name="payment_date" id="payment-date" required
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Amount Paid ($)</label>
+                <input type="number" name="amount_paid" id="payment-amount" step="0.01" required
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+            </div>
+            
+            <button type="submit" class="btn" style="background: #48bb78;">Confirm Payment</button>
+        </form>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('payment-date').value = today;
+    });
+    
+    function openModal(modalId) {
+        document.getElementById(modalId).style.display = 'block';
+    }
+    
+    function closeModal(modalId) {
+        document.getElementById(modalId).style.display = 'none';
+    }
+    
+    function openPayModal(billId, billName, amount) {
+        document.getElementById('pay-bill-name').textContent = billName;
+        document.getElementById('payment-amount').value = amount.toFixed(2);
+        document.getElementById('payBillForm').action = '/bills/' + billId + '/pay';
+        openModal('payBillModal');
+    }
+    
+    window.onclick = function(event) {
+        if (event.target.classList.contains('modal')) {
+            event.target.style.display = 'none';
+        }
+    }
+</script>
+{% endblock %}

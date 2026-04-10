@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+
+{% block title %}Budget Envelopes - Finance Tracker{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <h1>📊 Budget Envelopes</h1>
+    <button class="btn" onclick="openModal('createEnvelopeModal')">+ Create Envelope</button>
+</div>
+
+<div class="grid">
+    {% for envelope in envelopes %}
+    <div class="card">
+        <h3>{{ envelope['name'] }}</h3>
+        
+        <div style="margin: 1rem 0;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                <span style="color: #718096;">Monthly Budget:</span>
+                <strong>${{ "%.2f"|format(envelope['monthly_allocation']) }}</strong>
+            </div>
+            
+            <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                <span style="color: #718096;">Current Balance:</span>
+                <strong style="color: {% if envelope['current_balance'] < 0 %}#f56565{% else %}#48bb78{% endif %}">
+                    ${{ "%.2f"|format(envelope['current_balance']) }}
+                </strong>
+            </div>
+            
+            <div class="progress-bar">
+                {% set percentage = (envelope['current_balance'] / envelope['monthly_allocation'] * 100) | int %}
+                {% set capped = [percentage, 100] | min %}
+                <div class="progress-fill {% if envelope['current_balance'] < 0 %}over{% endif %}" 
+                     style="width: {{ [capped, 0] | max }}%"></div>
+            </div>
+        </div>
+        
+        <div style="margin-top: 1rem;">
+            <span class="badge {% if envelope['overspend_rule'] == 'stop' %}badge-warning{% else %}badge-info{% endif %}">
+                {{ envelope['overspend_rule'].upper() }} Rule
+            </span>
+            
+            {% if envelope['current_balance'] < 0 %}
+                <span class="badge badge-danger">OVERSPENT</span>
+            {% elif envelope['current_balance'] < envelope['monthly_allocation'] * 0.2 %}
+                <span class="badge badge-warning">Low Balance</span>
+            {% else %}
+                <span class="badge badge-success">Healthy</span>
+            {% endif %}
+        </div>
+        
+        <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+            <button class="btn" style="flex: 1; font-size: 0.75rem; padding: 0.4rem;" 
+                    onclick="openAllocateModal({{ envelope['id'] }}, '{{ envelope['name'] }}')">
+                Allocate
+            </button>
+            <button class="btn" style="flex: 1; font-size: 0.75rem; padding: 0.4rem;"
+                    onclick="openSpendModal({{ envelope['id'] }}, '{{ envelope['name'] }}')">
+                Spend
+            </button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% if not envelopes %}
+<div class="card" style="text-align: center; padding: 3rem;">
+    <h3 style="color: #718096;">No envelopes yet</h3>
+    <p style="color: #a0aec0; margin-bottom: 1.5rem;">Create your first budget envelope to get started</p>
+    <button class="btn" onclick="openModal('createEnvelopeModal')">Create Envelope</button>
+</div>
+{% endif %}
+
+<div style="margin-top: 2rem;">
+    <form action="/envelopes/rollover" method="POST" style="display: inline;">
+        <button type="submit" class="btn" style="background: #ed8936;">Execute Monthly Rollover</button>
+    </form>
+    <span style="margin-left: 1rem; color: #718096;">Carries over remaining balances and adds new monthly allocations</span>
+</div>
+
+<!-- Create Envelope Modal -->
+<div id="createEnvelopeModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="background: white; max-width: 500px; margin: 5rem auto; padding: 2rem; border-radius: 8px;">
+        <span onclick="closeModal('createEnvelopeModal')" style="float: right; font-size: 1.5rem; cursor: pointer; color: #a0aec0;">&times;</span>
+        <h2>Create New Envelope</h2>
+        
+        <form action="/envelopes/create" method="POST">
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Envelope Name</label>
+                <input type="text" name="name" placeholder="e.g., Groceries, Dining Out" required 
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Monthly Allocation ($)</label>
+                <input type="number" name="monthly_allocation" step="0.01" placeholder="500.00" required
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Overspend Rule</label>
+                <select name="overspend_rule" style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+                    <option value="stop">Stop - Prevent overdraft</option>
+                    <option value="borrow">Borrow - Allow negative balance</option>
+                </select>
+            </div>
+            
+            <button type="submit" class="btn">Create Envelope</button>
+        </form>
+    </div>
+</div>
+
+<!-- Allocate Funds Modal -->
+<div id="allocateModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="background: white; max-width: 500px; margin: 5rem auto; padding: 2rem; border-radius: 8px;">
+        <span onclick="closeModal('allocateModal')" style="float: right; font-size: 1.5rem; cursor: pointer; color: #a0aec0;">&times;</span>
+        <h2>Allocate Funds</h2>
+        <p style="color: #718096; margin-bottom: 1rem;">Add money to: <strong id="allocate-envelope-name"></strong></p>
+        
+        <form id="allocateForm" method="POST">
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Amount ($)</label>
+                <input type="number" name="amount" step="0.01" placeholder="100.00" required
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+            </div>
+            
+            <button type="submit" class="btn" style="background: #48bb78;">Allocate</button>
+        </form>
+    </div>
+</div>
+
+<!-- Record Expense Modal -->
+<div id="spendModal" class="modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="background: white; max-width: 500px; margin: 5rem auto; padding: 2rem; border-radius: 8px;">
+        <span onclick="closeModal('spendModal')" style="float: right; font-size: 1.5rem; cursor: pointer; color: #a0aec0;">&times;</span>
+        <h2>Record Expense</h2>
+        <p style="color: #718096; margin-bottom: 1rem;">Spend from: <strong id="spend-envelope-name"></strong></p>
+        
+        <form id="spendForm" method="POST">
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Amount ($)</label>
+                <input type="number" name="amount" step="0.01" placeholder="45.50" required
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Merchant (optional)</label>
+                <input type="text" name="merchant" placeholder="e.g., Walmart, Amazon"
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label style="display: block; margin-bottom: 0.25rem; font-weight: 500; color: #4a5568;">Description (optional)</label>
+                <input type="text" name="description" placeholder="e.g., Weekly groceries"
+                       style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px; font-size: 0.875rem;">
+            </div>
+            
+            <button type="submit" class="btn">Record Expense</button>
+        </form>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function openModal(modalId) {
+        document.getElementById(modalId).style.display = 'block';
+    }
+    
+    function closeModal(modalId) {
+        document.getElementById(modalId).style.display = 'none';
+    }
+    
+    function openAllocateModal(envelopeId, envelopeName) {
+        document.getElementById('allocate-envelope-name').textContent = envelopeName;
+        document.getElementById('allocateForm').action = '/envelopes/' + envelopeId + '/allocate';
+        openModal('allocateModal');
+    }
+    
+    function openSpendModal(envelopeId, envelopeName) {
+        document.getElementById('spend-envelope-name').textContent = envelopeName;
+        document.getElementById('spendForm').action = '/envelopes/' + envelopeId + '/spend';
+        openModal('spendModal');
+    }
+    
+    window.onclick = function(event) {
+        if (event.target.classList.contains('modal')) {
+            event.target.style.display = 'none';
+        }
+    }
+</script>
+{% endblock %}

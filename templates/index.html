@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1 style="margin-bottom: 2rem;">Financial Dashboard</h1>
+
+<!-- Summary Statistics -->
+<div class="grid">
+    <div class="card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+        <h3 style="color: white; opacity: 0.9;">Total Budget</h3>
+        <div style="font-size: 2rem; font-weight: bold;" id="total-allocated">$0.00</div>
+    </div>
+    
+    <div class="card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white;">
+        <h3 style="color: white; opacity: 0.9;">Spent This Month</h3>
+        <div style="font-size: 2rem; font-weight: bold;" id="spent-month">$0.00</div>
+    </div>
+    
+    <div class="card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white;">
+        <h3 style="color: white; opacity: 0.9;">Bills Due (30 Days)</h3>
+        <div style="font-size: 2rem; font-weight: bold;" id="upcoming-bills">$0.00</div>
+    </div>
+</div>
+
+<!-- Budget Envelopes Overview -->
+<div class="card">
+    <h2>📊 Budget Envelopes</h2>
+    {% if envelopes %}
+    <table>
+        <thead>
+            <tr>
+                <th>Envelope</th>
+                <th>Budget</th>
+                <th>Balance</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for envelope in envelopes %}
+            <tr>
+                <td><strong>{{ envelope['name'] }}</strong></td>
+                <td>${{ "%.2f"|format(envelope['monthly_allocation']) }}</td>
+                <td>${{ "%.2f"|format(envelope['current_balance']) }}</td>
+                <td>
+                    {% if envelope['current_balance'] < 0 %}
+                        <span class="badge badge-danger">Overspent</span>
+                    {% elif envelope['current_balance'] < envelope['monthly_allocation'] * 0.2 %}
+                        <span class="badge badge-warning">Low</span>
+                    {% else %}
+                        <span class="badge badge-success">Good</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No envelopes yet. <a href="/envelopes">Create your first envelope</a></p>
+    {% endif %}
+</div>
+
+<!-- Upcoming Bills -->
+<div class="card">
+    <h2>📅 Upcoming Bills</h2>
+    {% if upcoming_bills %}
+    <table>
+        <thead>
+            <tr>
+                <th>Bill Name</th>
+                <th>Amount</th>
+                <th>Due Date</th>
+                <th>Category</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for bill in upcoming_bills %}
+            <tr>
+                <td><strong>{{ bill['name'] }}</strong></td>
+                <td>${{ "%.2f"|format(bill['amount']) }}</td>
+                <td>{{ bill['next_due_date'] }}</td>
+                <td><span class="badge badge-info">{{ bill['category'] }}</span></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No upcoming bills. <a href="/bills">Add a bill</a></p>
+    {% endif %}
+</div>
+
+<!-- Simulate Purchase -->
+<div class="card" style="border: 2px dashed #cbd5e0;">
+    <h2>🧪 Simulate Purchase (Testing)</h2>
+    <form action="/simulate-purchase" method="POST" style="display: flex; gap: 1rem; align-items: end;">
+        <div style="flex: 1;">
+            <label>Merchant</label>
+            <input type="text" name="merchant" placeholder="Walmart" required style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px;">
+        </div>
+        <div style="flex: 1;">
+            <label>Amount</label>
+            <input type="number" name="amount" step="0.01" placeholder="50.00" required style="width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 4px;">
+        </div>
+        <button type="submit" class="btn">Simulate</button>
+    </form>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    fetch('/api/dashboard/summary')
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById('total-allocated').textContent = '$' + data.total_allocated.toFixed(2);
+            document.getElementById('spent-month').textContent = '$' + data.spent_this_month.toFixed(2);
+            document.getElementById('upcoming-bills').textContent = '$' + data.upcoming_bills_30days.toFixed(2);
+        });
+</script>
+{% endblock %}
