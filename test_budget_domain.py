@@ -30,11 +30,16 @@ class TestBudgetEnvelopeDomain(unittest.TestCase):
         
         self.manager = BudgetEnvelopeManager()
     
-    def tearDown(self):
+        def tearDown(self):
         """Clean up test database"""
+        db = get_db()
+        db.close()  # Close DB first!
         self.app_context.pop()
         os.close(self.db_fd)
-        os.unlink(self.db_path)
+        try:
+            os.unlink(self.db_path)
+        except PermissionError:
+            pass  # Windows file lock - ignore
     
     def test_create_envelope(self):
         """Test creating a new budget envelope"""

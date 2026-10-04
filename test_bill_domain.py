@@ -30,11 +30,16 @@ class TestBillTrackingDomain(unittest.TestCase):
         
         self.manager = BillManager()
     
-    def tearDown(self):
+        def tearDown(self):
         """Clean up test database"""
+        db = get_db()
+        db.close()  # Close DB first!
         self.app_context.pop()
         os.close(self.db_fd)
-        os.unlink(self.db_path)
+        try:
+            os.unlink(self.db_path)
+        except PermissionError:
+            pass  # Windows file lock - ignore
     
     def test_create_bill(self):
         """Test creating a new recurring bill"""
