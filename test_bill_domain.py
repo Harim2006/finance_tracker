@@ -30,7 +30,7 @@ class TestBillTrackingDomain(unittest.TestCase):
         
         self.manager = BillManager()
     
-        def tearDown(self):
+    def tearDown(self):
         """Clean up test database"""
         db = get_db()
         db.close()  # Close DB first!

@@ -30,7 +30,7 @@ class TestBudgetEnvelopeDomain(unittest.TestCase):
         
         self.manager = BudgetEnvelopeManager()
     
-        def tearDown(self):
+    def tearDown(self):
         """Clean up test database"""
         db = get_db()
         db.close()  # Close DB first!
