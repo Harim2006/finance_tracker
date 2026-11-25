@@ -6,3 +6,21 @@ __pycache__/
 htmlcov/
 *.db
 *.db.backup
+# Assignment 2 secrets
+.env
+.env.*
+!.env.example
+
+# Python testing and development
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+__pycache__/
+.venv/
+*.pyc
+
+# Local database files
+*.db
+*.db.backup
