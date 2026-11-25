@@ -195,5 +195,92 @@ class TestBillTrackingDomain(unittest.TestCase):
         self.assertGreaterEqual(len(projections), 4)
 
 
+    def test_negative_bill_amount(self):
+        with self.assertRaises(ValueError):
+            self.manager.create_bill("Test", -50, "monthly", 15)
+
+    def test_invalid_bill_amount(self):
+        with self.assertRaises(ValueError):
+            self.manager.create_bill("Test", "abc", "monthly", 15)
+
+    def test_invalid_bill_frequency(self):
+        with self.assertRaises(ValueError):
+            self.manager.create_bill("Test", 50, "hourly", 15)
+
+    def test_invalid_due_day(self):
+        for day in [0, 32, "abc"]:
+            with self.subTest(day=day):
+                with self.assertRaises(ValueError):
+                    self.manager.create_bill(
+                        "Test", 50, "monthly", day
+                    )
+
+    def test_invalid_projection_duration(self):
+        for months in [-1, 0, 121, "abc"]:
+            with self.subTest(months=months):
+                with self.assertRaises(ValueError):
+                    self.manager.project_upcoming_bills(months)
+
+    def test_payment_unknown_bill(self):
+        with self.assertRaises(ValueError):
+            self.manager.mark_as_paid(999999)
+
+    def test_deactivate_unknown_bill(self):
+        with self.assertRaises(ValueError):
+            self.manager.deactivate_bill(999999)
+
+    def test_inactive_bill_cannot_be_paid(self):
+        bill_id = self.manager.create_bill(
+            "Test", 50, "monthly", 15
+        )
+
+        self.manager.deactivate_bill(bill_id)
+
+        with self.assertRaises(ValueError):
+            self.manager.mark_as_paid(bill_id)
+
+    def test_negative_payment_amount(self):
+        bill_id = self.manager.create_bill(
+            "Test", 50, "monthly", 15
+        )
+
+        with self.assertRaises(ValueError):
+            self.manager.mark_as_paid(
+                bill_id, amount_paid=-50
+            )
+
+    def test_projection_dates_advance(self):
+        bill_id = self.manager.create_bill(
+            "Test", 50, "monthly", 15
+        )
+
+        projections = self.manager.project_upcoming_bills(6)
+
+        dates = [
+            item['due_date']
+            for item in projections
+            if item['bill_id'] == bill_id
+        ]
+
+        self.assertGreaterEqual(len(dates), 5)
+        self.assertEqual(dates, sorted(set(dates)))
+
+    def test_projection_excludes_inactive_bill(self):
+        bill_id = self.manager.create_bill(
+            "Test", 50, "monthly", 15
+        )
+
+        self.manager.deactivate_bill(bill_id)
+
+        projections = self.manager.project_upcoming_bills(3)
+
+        self.assertFalse(
+            any(item['bill_id'] == bill_id
+                for item in projections)
+        )
+
+
+
+
 if __name__ == '__main__':
     unittest.main()

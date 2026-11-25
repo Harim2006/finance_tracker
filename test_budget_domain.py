@@ -234,5 +234,73 @@ class TestBudgetEnvelopeDomain(unittest.TestCase):
         self.assertTrue(any(e['name'] == 'Test2' for e in envelopes))
 
 
+    def test_negative_allocation(self):
+        envelope_id = self.manager.create_envelope("Test", 100)
+
+        with self.assertRaises(ValueError):
+            self.manager.allocate_funds(envelope_id, -50)
+
+        status = self.manager.get_envelope_status(envelope_id)
+        self.assertEqual(status['current_balance'], 100)
+
+    def test_negative_spending(self):
+        envelope_id = self.manager.create_envelope("Test", 100)
+
+        with self.assertRaises(ValueError):
+            self.manager.record_transaction(envelope_id, -20)
+
+        status = self.manager.get_envelope_status(envelope_id)
+        self.assertEqual(status['current_balance'], 100)
+
+    def test_allocate_to_missing_envelope(self):
+        with self.assertRaises(ValueError):
+            self.manager.allocate_funds(999999, 50)
+
+    def test_spend_from_missing_envelope(self):
+        with self.assertRaises(ValueError):
+            self.manager.record_transaction(999999, 50)
+
+    def test_duplicate_envelope_name(self):
+        self.manager.create_envelope("Test", 100)
+
+        with self.assertRaises(ValueError):
+            self.manager.create_envelope("Test", 200)
+
+    def test_invalid_envelope_amounts(self):
+        for amount in ["abc", None, -100, True,
+                       float("nan"), float("inf")]:
+            with self.subTest(amount=amount):
+                with self.assertRaises(ValueError):
+                    self.manager.create_envelope("Test", amount)
+
+    def test_empty_envelope_name(self):
+        with self.assertRaises(ValueError):
+            self.manager.create_envelope("", 100)
+
+    def test_invalid_overspend_rule(self):
+        with self.assertRaises(ValueError):
+            self.manager.create_envelope("Test", 100, "invalid")
+
+    def test_rollover_idempotency(self):
+        envelope_id = self.manager.create_envelope("Test", 100)
+
+        first = self.manager.execute_monthly_rollover()
+        second = self.manager.execute_monthly_rollover()
+
+        self.assertIn(envelope_id, first)
+        self.assertNotIn(envelope_id, second)
+
+        status = self.manager.get_envelope_status(envelope_id)
+        self.assertEqual(status['current_balance'], 200)
+
+    def test_uncategorized_bank_transaction(self):
+        result = self.manager.process_bank_transaction(
+            "Unknown merchant", 20
+        )
+
+        self.assertEqual(result['status'], 'uncategorized')
+
+
+
 if __name__ == '__main__':
     unittest.main()
