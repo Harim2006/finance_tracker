@@ -70,7 +70,7 @@ def envelopes():
     """List all budget envelopes"""
     db = get_db()
     envelopes = db.execute('SELECT * FROM envelopes ORDER BY name').fetchall()
-    return render_template('envelopes.html', envelopes=envelopes)
+    return render_template('envelope.html', envelopes=envelopes)
 
 
 @app.route('/envelopes/create', methods=['POST'])

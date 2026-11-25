@@ -81,14 +81,17 @@ class BudgetEnvelopeManager:
         """Execute monthly rollover for all envelopes"""
         db = get_db()
         current_month = date.today().strftime('%Y-%m')
+        rollover_date = date.today().replace(day=1)
         
         envelopes = db.execute('SELECT * FROM envelopes WHERE rollover_enabled = 1').fetchall()
         rolled_over = []
         
         for envelope in envelopes:
             # Skip if already rolled over this month
-            if envelope['last_rollover_date'] == current_month:
-                continue
+            last_rollover = envelope['last_rollover_date']
+
+            if last_rollover and str(last_rollover)[:7] == current_month:
+               continue
             
             envelope_id = envelope['id']
             current_balance = envelope['current_balance']
@@ -115,7 +118,7 @@ class BudgetEnvelopeManager:
                 '''UPDATE envelopes 
                    SET current_balance = ?, last_rollover_date = ?
                    WHERE id = ?''',
-                (new_balance, current_month, envelope_id)
+                (new_balance, rollover_date.isoformat(), envelope_id)
             )
             
             rolled_over.append(envelope_id)
@@ -212,7 +215,7 @@ class BudgetEnvelopeManager:
             '''SELECT e.name, SUM(t.amount) as total
                FROM transactions t
                JOIN envelopes e ON t.envelope_id = e.id
-               WHERE t.date BETWEEN ? AND ?
+               WHERE date(t.date) BETWEEN date(?) AND date(?)
                GROUP BY e.id, e.name
                ORDER BY total DESC''',
             (start_date, end_date)
