@@ -36,6 +36,23 @@
                             onclick="openPayModal({{ bill['id'] }}, '{{ bill['name'] }}', {{ bill['amount'] }})">
                         Mark Paid
                     </button>
+
+                    <form
+                        method="POST"
+                        action="{{ url_for('deactivate_bill', bill_id=bill['id']) }}"
+                        style="display: inline-block;"
+                        onsubmit="return confirm('Deactivate this bill?');">
+
+                        <button type="submit"
+                                class="btn"
+                                style="font-size: 0.75rem;
+                                       padding: 0.25rem 0.75rem;
+                                       background: #e53e3e;">
+                            Deactivate
+                        </button>
+
+                    </form>
+
                 </td>
             </tr>
             {% endfor %}

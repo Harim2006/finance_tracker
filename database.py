@@ -19,6 +19,7 @@ def get_db():
             detect_types=sqlite3.PARSE_DECLTYPES
         )
         g.db.row_factory = sqlite3.Row
+        g.db.execute("PRAGMA foreign_keys = ON")
     return g.db
 
 
@@ -117,6 +118,32 @@ def init_db():
     db.execute('CREATE INDEX IF NOT EXISTS idx_bills_due_date ON bills(next_due_date)')
     db.execute('CREATE INDEX IF NOT EXISTS idx_bill_payments_status ON bill_payments(status)')
     
+    # Repair legacy rollover dates
+    db.execute("""
+        UPDATE envelopes
+        SET last_rollover_date = last_rollover_date || '-01'
+        WHERE length(last_rollover_date) = 7
+          AND last_rollover_date GLOB
+              '[0-9][0-9][0-9][0-9]-[0-9][0-9]'
+          AND substr(last_rollover_date, 6, 2)
+              BETWEEN '01' AND '12'
+    """)
+
+    # Restore missing payment records for existing bills
+    db.execute("""
+        INSERT INTO bill_payments (bill_id, due_date, status)
+        SELECT b.id, b.next_due_date, 'unpaid'
+        FROM bills b
+        WHERE b.active = 1
+          AND b.next_due_date IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM bill_payments bp
+              WHERE bp.bill_id = b.id
+                AND bp.due_date = b.next_due_date
+          )
+    """)
+
     db.commit()
 
 
@@ -168,11 +195,23 @@ def seed_sample_data():
             else:
                 next_due = date(today.year, today.month + 1, due_day)
         
-        db.execute(
-            '''INSERT INTO bills (name, amount, frequency, due_day, category, next_due_date)
+        
+        cursor = db.execute(
+            '''INSERT INTO bills
+               (name, amount, frequency, due_day,
+                category, next_due_date)
                VALUES (?, ?, ?, ?, ?, ?)''',
-            (name, amount, freq, due_day, category, next_due.isoformat())
+            (name, amount, freq, due_day,
+             category, next_due.isoformat())
         )
+
+        db.execute(
+            '''INSERT INTO bill_payments
+               (bill_id, due_date, status)
+               VALUES (?, ?, 'unpaid')''',
+            (cursor.lastrowid, next_due.isoformat())
+        )
+
     
     # Sample category rules
     rules = [

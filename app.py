@@ -203,10 +203,13 @@ def rollover_envelopes():
 
 @app.route('/bills')
 def bills():
-    """List all bills and subscriptions"""
-    db = get_db()
-    bills = db.execute('SELECT * FROM bills ORDER BY next_due_date').fetchall()
-    return render_template('bills.html', bills=bills)
+    """Display all active recurring bills"""
+    bills = bill_manager.get_all_bills()
+
+    return render_template(
+        'bills.html',
+        bills=bills
+    )
 
 
 
