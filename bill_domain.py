@@ -112,9 +112,23 @@ class BillManager:
         db.commit()
         return True
     
-    def _calculate_next_occurrence(self, bill):
-        """Calculate when a bill should recur next"""
-        current_due = datetime.fromisoformat(bill['next_due_date']).date()
+    
+    @staticmethod
+    def _as_date(value):
+        if isinstance(value, datetime):
+            return value.date()
+
+        if isinstance(value, date):
+            return value
+
+        return date.fromisoformat(value)
+    
+    
+    def _calculate_next_occurrence(self, bill, current_due=None):
+        if current_due is None:
+            current_due = self._as_date(bill['next_due_date'])
+        else:
+            current_due = self._as_date(current_due)
         frequency = bill['frequency']
         
         if frequency == 'monthly':
@@ -139,7 +153,7 @@ class BillManager:
         projections = []
         
         for bill in bills:
-            current_date = datetime.fromisoformat(bill['next_due_date']).date()
+            current_date = self._as_date(bill['next_due_date'])
             
             while current_date <= end_date:
                 payment = db.execute(
@@ -159,7 +173,7 @@ class BillManager:
                     'status': status
                 })
                 
-                current_date = self._calculate_next_occurrence(bill)
+                current_date = self._calculate_next_occurrence(bill, current_date)
         
         projections.sort(key=lambda x: x['due_date'])
         
