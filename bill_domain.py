@@ -5,6 +5,13 @@ Business logic for recurring bills, due dates, payment tracking, and projections
 from datetime import datetime, date, timedelta
 from dateutil.relativedelta import relativedelta
 from database import get_db
+from validation import (
+    validate_amount,
+    validate_name,
+    validate_integer,
+    NotFoundError,
+    ConflictError
+)
 
 
 class BillManager:
@@ -18,24 +25,44 @@ class BillManager:
         'yearly': 365
     }
     
+    
     def create_bill(self, name, amount, frequency, due_day, category='other'):
         """Create a new recurring bill"""
+
+        name = validate_name(name)
+        amount = validate_amount(amount)
+
+        if frequency not in self.FREQUENCY_MAP:
+            raise ValueError("Unsupported bill frequency")
+
+        max_due_day = {
+            'weekly': 7,
+            'biweekly': 14,
+            'monthly': 31,
+            'quarterly': 90,
+            'yearly': 365
+        }[frequency]
+
+        due_day = validate_integer(due_day, 1, max_due_day)
+
         db = get_db()
-        
-        # Calculate first due date
-        next_due = self._calculate_next_due_date(frequency, due_day)
-        
+
+        next_due = self._calculate_next_due_date(
+            frequency, due_day
+        )
+
         cursor = db.execute(
-            '''INSERT INTO bills (name, amount, frequency, due_day, category, next_due_date)
+            '''INSERT INTO bills
+               (name, amount, frequency, due_day, category, next_due_date)
                VALUES (?, ?, ?, ?, ?, ?)''',
             (name, amount, frequency, due_day, category, next_due.isoformat())
         )
-        db.commit()
-        
-        # Create first payment record
+
         self._create_payment_record(cursor.lastrowid, next_due)
-        
+        db.commit()
+
         return cursor.lastrowid
+
     
     def _calculate_next_due_date(self, frequency, due_day):
         """Calculate the next due date based on frequency and day"""
@@ -68,49 +95,63 @@ class BillManager:
         )
         db.commit()
     
+    
     def mark_as_paid(self, bill_id, payment_date=None, amount_paid=None):
         """Mark a bill as paid"""
+
         db = get_db()
-        
+
         if payment_date is None:
-            payment_date = date.today().isoformat()
-        
-        bill = db.execute('SELECT * FROM bills WHERE id = ?', (bill_id,)).fetchone()
-        
+            payment_date = date.today()
+
+        payment_date = self._as_date(payment_date).isoformat()
+
+        bill = db.execute(
+            'SELECT * FROM bills WHERE id = ?',
+            (bill_id,)
+        ).fetchone()
+
         if not bill:
-            raise ValueError(f"Bill {bill_id} not found")
-        
+            raise NotFoundError(f"Bill {bill_id} not found")
+
+        if not bill['active']:
+            raise ConflictError("Bill is inactive")
+
         if amount_paid is None:
             amount_paid = bill['amount']
-        
-        # Find the unpaid record
+
+        amount_paid = validate_amount(amount_paid)
+
         payment_record = db.execute(
-            '''SELECT * FROM bill_payments 
+            '''SELECT * FROM bill_payments
                WHERE bill_id = ? AND status = 'unpaid'
                ORDER BY due_date LIMIT 1''',
             (bill_id,)
         ).fetchone()
-        
-        if payment_record:
-            db.execute(
-                '''UPDATE bill_payments 
-                   SET status = 'paid', paid_date = ?, amount_paid = ?
-                   WHERE id = ?''',
-                (payment_date, amount_paid, payment_record['id'])
-            )
-        
-        # Calculate and update next due date
+
+        if payment_record is None:
+            raise ConflictError("No unpaid occurrence found")
+
         next_due = self._calculate_next_occurrence(bill)
+
+        db.execute(
+            '''UPDATE bill_payments
+               SET status = 'paid', paid_date = ?, amount_paid = ?
+               WHERE id = ?''',
+            (payment_date, amount_paid, payment_record['id'])
+        )
+
         db.execute(
             'UPDATE bills SET next_due_date = ? WHERE id = ?',
             (next_due.isoformat(), bill_id)
         )
-        
-        # Create next payment record
+
         self._create_payment_record(bill_id, next_due)
-        
+
         db.commit()
+
         return True
+
     
     
     @staticmethod
@@ -145,6 +186,7 @@ class BillManager:
     
     def project_upcoming_bills(self, months=3):
         """Project all bill payments for the next N months"""
+        months = validate_integer(months, 1, 120)
         db = get_db()
         
         bills = db.execute('SELECT * FROM bills WHERE active = 1').fetchall()
@@ -227,14 +269,25 @@ class BillManager:
         
         return total
     
+    
     def deactivate_bill(self, bill_id):
         """Cancel/deactivate a bill"""
+
         db = get_db()
-        
-        db.execute('UPDATE bills SET active = 0 WHERE id = ?', (bill_id,))
+
+        cursor = db.execute(
+            'UPDATE bills SET active = 0 WHERE id = ?',
+            (bill_id,)
+        )
+
+        if cursor.rowcount == 0:
+            db.rollback()
+            raise NotFoundError("Bill not found")
+
         db.commit()
-        
+
         return True
+
     
     def get_bill_payment_history(self, bill_id, limit=12):
         """Get payment history for a bill"""

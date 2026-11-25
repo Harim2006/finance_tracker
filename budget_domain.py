@@ -4,6 +4,12 @@ Business logic for budget envelopes, allocations, transactions, and rollover
 """
 from datetime import datetime, date
 from database import get_db
+from validation import (
+    validate_amount,
+    validate_name,
+    NotFoundError,
+    ConflictError
+)
 
 
 class BudgetEnvelopeManager:
@@ -15,33 +21,69 @@ class BudgetEnvelopeManager:
     - Monthly rollover logic
     """
     
+    
+        
+    
     def create_envelope(self, name, monthly_allocation, overspend_rule='stop'):
         """Create a new budget envelope"""
+
+        name = validate_name(name)
+        monthly_allocation = validate_amount(
+            monthly_allocation, allow_zero=True
+        )
+
+        if overspend_rule not in ('stop', 'borrow'):
+            raise ValueError("Invalid overspend rule")
+
         db = get_db()
-        
+
+        existing = db.execute(
+            'SELECT id FROM envelopes WHERE name = ?',
+            (name,)
+        ).fetchone()
+
+        if existing:
+            raise ConflictError("Envelope already exists")
+
         cursor = db.execute(
-            '''INSERT INTO envelopes (name, monthly_allocation, current_balance, overspend_rule)
+            '''INSERT INTO envelopes
+               (name, monthly_allocation, current_balance, overspend_rule)
                VALUES (?, ?, ?, ?)''',
             (name, monthly_allocation, monthly_allocation, overspend_rule)
         )
+
         db.commit()
-        
+
         return cursor.lastrowid
+    
+    
     
     def allocate_funds(self, envelope_id, amount):
         """Add funds to an envelope"""
+
+        amount = validate_amount(amount)
         db = get_db()
-        
-        db.execute(
-            'UPDATE envelopes SET current_balance = current_balance + ? WHERE id = ?',
+
+        cursor = db.execute(
+            '''UPDATE envelopes
+               SET current_balance = current_balance + ?
+               WHERE id = ?''',
             (amount, envelope_id)
         )
+
+        if cursor.rowcount == 0:
+            db.rollback()
+            raise NotFoundError("Envelope not found")
+
         db.commit()
-        
+
         return True
+
     
     def record_transaction(self, envelope_id, amount, description='', merchant=''):
+        
         """Record a spending transaction from an envelope with overspend rules"""
+        amount = validate_amount(amount)
         db = get_db()
         
         # Get envelope details
@@ -51,7 +93,7 @@ class BudgetEnvelopeManager:
         ).fetchone()
         
         if not envelope:
-            raise ValueError(f"Envelope {envelope_id} not found")
+            raise NotFoundError(f"Envelope {envelope_id} not found")
         
         new_balance = envelope['current_balance'] - amount
         
