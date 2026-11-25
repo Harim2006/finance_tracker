@@ -2,8 +2,10 @@
 LLM-powered Financial Analysis and Q&A
 Provides insights and answers questions about user's financial data
 """
+from datetime import date, datetime, timedelta
 import json
 from datetime import datetime
+from datetime import date
 
 
 class FinanceLLMAnalyzer:
@@ -128,8 +130,11 @@ class FinanceLLMAnalyzer:
         today = datetime.now().date()
         next_30_days = today + timedelta(days=30)
         
-        upcoming = [b for b in bills if b.get('next_due_date') and 
-                   datetime.fromisoformat(b['next_due_date']).date() <= next_30_days]
+        upcoming = [
+            b for b in bills
+            if b.get('next_due_date')
+            and self._as_date(b['next_due_date']) <= next_7_days
+        ]
         
         if not upcoming:
             return "No bills are due in the next 30 days."
@@ -202,7 +207,7 @@ class FinanceLLMAnalyzer:
         
         upcoming_bills_total = sum(
             b['amount'] for b in bills 
-            if b.get('next_due_date') and datetime.fromisoformat(b['next_due_date']).date() <= next_30_days
+            if b.get('next_due_date') and self._as_date(b['next_due_date']) <= next_30_days
         )
         
         # Calculate truly available (after bills)
@@ -285,6 +290,16 @@ class FinanceLLMAnalyzer:
         return summary
     
     
+    @staticmethod
+    def _as_date(value):
+        if isinstance(value, datetime):
+            return value.date()
+
+        if isinstance(value, date):
+            return value
+
+        return datetime.fromisoformat(value).date()
+    
     def generate_insights(self, context):
         """Generate automated insights"""
         insights = []
@@ -306,8 +321,11 @@ class FinanceLLMAnalyzer:
         today = datetime.now().date()
         next_7_days = today + timedelta(days=7)
         
-        upcoming = [b for b in bills if b.get('next_due_date') and 
-                   datetime.fromisoformat(b['next_due_date']).date() <= next_7_days]
+        upcoming = [
+           b for b in bills
+           if b.get('next_due_date')
+           and self._as_date(b['next_due_date']) <= next_7_days
+        ]
         
         if upcoming:
             total_due = sum(b['amount'] for b in upcoming)

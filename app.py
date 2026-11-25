@@ -29,11 +29,7 @@ app.teardown_appcontext(close_db)
 # Initialize database on startup
 with app.app_context():
     init_db()
-    # Optionally seed sample data on first run
-    try:
-        seed_sample_data()
-    except:
-        pass  # Already seeded
+    seed_sample_data()
 
 # Initialize domain managers
 budget_manager = BudgetEnvelopeManager()
@@ -86,45 +82,47 @@ def required_field(data, field):
 
 
 
+
 @app.route('/')
 def index():
     """Dashboard showing overview of envelopes and bills"""
-    db = get_db()
-    
-    # Get envelope summary
-    envelopes = db.execute(
-        'SELECT * FROM envelopes ORDER BY name'
-    ).fetchall()
-    
-    # Get upcoming bills
-    upcoming_bills = db.execute(
-        '''SELECT * FROM bills 
-           WHERE next_due_date >= date('now') 
-           ORDER BY next_due_date LIMIT 5'''
-    ).fetchall()
-    
-    # Get recent transactions
-    recent_transactions = db.execute(
-        '''SELECT t.*, e.name as envelope_name 
-           FROM transactions t
-           LEFT JOIN envelopes e ON t.envelope_id = e.id
-           ORDER BY t.date DESC LIMIT 10'''
-    ).fetchall()
-    
-    return render_template('index.html', 
-                         envelopes=envelopes,
-                         upcoming_bills=upcoming_bills,
-                         recent_transactions=recent_transactions)
+
+    envelopes = sorted(
+        budget_manager.get_all_envelopes(),
+        key=lambda envelope: envelope['name']
+    )
+
+    upcoming_bills = bill_manager.get_upcoming_bills(30)[:5]
+
+    recent_transactions = (
+        budget_manager.get_recent_transactions(30)[:10]
+    )
+
+    return render_template(
+        'index.html',
+        envelopes=envelopes,
+        upcoming_bills=upcoming_bills,
+        recent_transactions=recent_transactions
+    )
+
 
 
 # ===== ENVELOPE BUDGET ROUTES =====
 
+
 @app.route('/envelopes')
 def envelopes():
     """List all budget envelopes"""
-    db = get_db()
-    envelopes = db.execute('SELECT * FROM envelopes ORDER BY name').fetchall()
-    return render_template('envelope.html', envelopes=envelopes)
+
+    envelopes = sorted(
+        budget_manager.get_all_envelopes(),
+        key=lambda envelope: envelope['name']
+    )
+
+    return render_template(
+        'envelope.html',
+        envelopes=envelopes
+    )
 
 
 
@@ -284,60 +282,52 @@ def upcoming_bills():
 
 # ===== FAKE BANK API =====
 
+
 @app.route('/api/bank/transaction', methods=['POST'])
 def fake_bank_transaction():
-    """
-    Fake bank API endpoint - simulates a bank sending transaction data
-    External systems (or our simulator) POST here when a purchase is made
-    """
-    data = request.get_json()
-    
-    # Auto-categorize and assign to envelope
-    merchant = data.get('merchant', '')
-    amount = abs(float(data.get('amount', 0)))
-    
-    # Simple categorization logic
-    envelope_id = budget_manager.auto_categorize_transaction(merchant, amount)
-    
-    if envelope_id:
-        transaction_id = budget_manager.record_transaction(
-            envelope_id=envelope_id,
-            amount=amount,
-            description=data.get('description', ''),
-            merchant=merchant
-        )
-        
-        return jsonify({
-            'status': 'processed',
-            'transaction_id': transaction_id,
-            'envelope_id': envelope_id
-        }), 201
-    else:
-        return jsonify({
-            'status': 'uncategorized',
-            'message': 'No matching envelope found'
-        }), 200
+    """Receive a simulated bank purchase"""
+
+    data = get_request_data()
+
+    raw_amount = required_field(data, 'amount')
+
+    if isinstance(raw_amount, bool):
+        raise ValueError("Amount must be numeric")
+
+    try:
+        amount = abs(float(raw_amount))
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("Amount must be numeric")
+
+    result = budget_manager.process_bank_transaction(
+        merchant=required_field(data, 'merchant'),
+        amount=amount,
+        description=data.get('description', '')
+    )
+
+    status = 201 if result['status'] == 'processed' else 200
+
+    return jsonify(result), status
+
+
 
 
 @app.route('/simulate-purchase', methods=['POST'])
 def simulate_purchase():
-    """Simulate a purchase for testing the bank API integration"""
+    """Simulate a bank purchase without an HTTP self-call"""
+
     data = get_request_data()
-    
-    # Call our own fake bank API
-    import requests
-    response = requests.post(
-        request.url_root + 'api/bank/transaction',
-        json={
-            'merchant': data['merchant'],
-            'amount': -float(data['amount']),
-            'description': data.get('description', ''),
-            'timestamp': datetime.now().isoformat()
-        }
+
+    result = budget_manager.process_bank_transaction(
+        merchant=required_field(data, 'merchant'),
+        amount=required_field(data, 'amount'),
+        description=data.get('description', '')
     )
-    
+
     if request.is_json:
-        return jsonify(response.json())
+        status = 201 if result['status'] == 'processed' else 200
+        return jsonify(result), status
+
     return redirect(url_for('index'))
 
 

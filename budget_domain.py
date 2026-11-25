@@ -186,6 +186,43 @@ class BudgetEnvelopeManager:
         
         return None
     
+    
+    def process_bank_transaction(
+        self, merchant, amount, description=''
+    ):
+        """Categorize and record an incoming bank purchase"""
+
+        merchant = validate_name(merchant)
+        amount = validate_amount(amount)
+
+        envelope_id = self.auto_categorize_transaction(
+            merchant, amount
+        )
+
+        if envelope_id is None:
+            return {
+                'status': 'uncategorized',
+                'message': 'No matching envelope found'
+            }
+
+        transaction_id = self.record_transaction(
+            envelope_id=envelope_id,
+            amount=amount,
+            description=description,
+            merchant=merchant
+        )
+
+        if transaction_id is None:
+            raise ConflictError("Insufficient envelope funds")
+
+        return {
+            'status': 'processed',
+            'transaction_id': transaction_id,
+            'envelope_id': envelope_id
+        }
+
+
+    
     def get_envelope_status(self, envelope_id):
         """Get current status and statistics for an envelope"""
         db = get_db()
