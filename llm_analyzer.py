@@ -3,9 +3,6 @@ LLM-powered Financial Analysis and Q&A
 Provides insights and answers questions about user's financial data
 """
 from datetime import date, datetime, timedelta
-import json
-from datetime import datetime
-from datetime import date
 
 
 class FinanceLLMAnalyzer:
@@ -119,40 +116,58 @@ class FinanceLLMAnalyzer:
         return suggestions
     
     
+    
     def _summarize_upcoming_bills(self, context):
         """Summarize upcoming bills"""
         bills = context.get('bills', [])
-        
+
         if not bills:
             return "You don't have any bills tracked yet."
-        
-        from datetime import datetime, timedelta
-        today = datetime.now().date()
+
+        today = date.today()
         next_30_days = today + timedelta(days=30)
-        
+
         upcoming = [
             b for b in bills
             if b.get('next_due_date')
-            and self._as_date(b['next_due_date']) <= next_7_days
+            and today <= self._as_date(
+                b['next_due_date']
+            ) <= next_30_days
         ]
-        
+
         if not upcoming:
             return "No bills are due in the next 30 days."
-        
+
         summary = "**Upcoming Bills (Next 30 Days)**:\n\n"
-        
-        # Sort by date
-        upcoming.sort(key=lambda b: b['next_due_date'])
-        
+
+        upcoming.sort(
+            key=lambda b: self._as_date(b['next_due_date'])
+        )
+
         total = 0
+
         for bill in upcoming:
-            due_date = datetime.fromisoformat(bill['next_due_date']).strftime('%b %d')
-            summary += f"• **{bill['name']}**: ${bill['amount']:.2f} - Due {due_date}\n"
+            due_date = self._as_date(
+                bill['next_due_date']
+            ).strftime('%b %d')
+
+            summary += (
+                f"• **{bill['name']}**: "
+                f"${bill['amount']:.2f} - Due {due_date}\n"
+            )
+
             total += bill['amount']
-        
-        summary += f"\n**Total due in next 30 days**: ${total:.2f}"
-        
+
+        summary += (
+            f"\n**Total due in next 30 days**: ${total:.2f}"
+        )
+
         return summary
+
+
+
+        
+    
     
     
     def _identify_top_spending(self, context):
@@ -337,7 +352,7 @@ class FinanceLLMAnalyzer:
         
         # Positive feedback
         healthy = [e for e in envelopes if e['current_balance'] > 0 and e['current_balance'] >= e['monthly_allocation'] * 0.5]
-        if len(healthy) >= len(envelopes) * 0.7:
+        if envelopes and len(healthy) >= len(envelopes) * 0.7:
             insights.append({
                 'type': 'success',
                 'title': 'Good Financial Health',

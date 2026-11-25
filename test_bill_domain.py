@@ -282,5 +282,104 @@ class TestBillTrackingDomain(unittest.TestCase):
 
 
 
+    def test_monthly_recurrence(self):
+        from datetime import date
+
+        bill = {
+            'frequency': 'monthly',
+            'next_due_date': date(2026, 1, 15)
+        }
+
+        result = self.manager._calculate_next_occurrence(bill)
+
+        self.assertEqual(result, date(2026, 2, 15))
+
+    def test_weekly_recurrence(self):
+        from datetime import date
+
+        bill = {
+            'frequency': 'weekly',
+            'next_due_date': date(2026, 1, 15)
+        }
+
+        result = self.manager._calculate_next_occurrence(bill)
+
+        self.assertEqual(result, date(2026, 1, 22))
+
+    def test_biweekly_recurrence(self):
+        from datetime import date
+
+        bill = {
+            'frequency': 'biweekly',
+            'next_due_date': date(2026, 1, 15)
+        }
+
+        result = self.manager._calculate_next_occurrence(bill)
+
+        self.assertEqual(result, date(2026, 1, 29))
+
+    def test_quarterly_recurrence(self):
+        from datetime import date
+
+        bill = {
+            'frequency': 'quarterly',
+            'next_due_date': date(2026, 1, 15)
+        }
+
+        result = self.manager._calculate_next_occurrence(bill)
+
+        self.assertEqual(result, date(2026, 4, 15))
+
+    def test_yearly_recurrence(self):
+        from datetime import date
+
+        bill = {
+            'frequency': 'yearly',
+            'next_due_date': date(2026, 1, 15)
+        }
+
+        result = self.manager._calculate_next_occurrence(bill)
+
+        self.assertEqual(result, date(2027, 1, 15))
+
+    def test_date_conversion(self):
+        from datetime import date, datetime
+
+        expected = date(2026, 1, 15)
+
+        for value in [
+            expected,
+            '2026-01-15',
+            datetime(2026, 1, 15, 12, 30)
+        ]:
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.manager._as_date(value),
+                    expected
+                )
+
+    def test_payment_without_unpaid_record(self):
+        from database import get_db
+        from validation import ConflictError
+
+        bill_id = self.manager.create_bill(
+            "Test", 50, "monthly", 15
+        )
+
+        db = get_db()
+
+        db.execute(
+            "DELETE FROM bill_payments WHERE bill_id = ?",
+            (bill_id,)
+        )
+
+        db.commit()
+
+        with self.assertRaises(ConflictError):
+            self.manager.mark_as_paid(bill_id)
+
+
+
+
 if __name__ == '__main__':
     unittest.main()
