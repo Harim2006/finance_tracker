@@ -6,10 +6,12 @@ services:
       ACCEPT_EULA: "Y"
       MSSQL_PID: Developer
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?Set MSSQL_SA_PASSWORD in .env}
+      BUDGET_DB_PASSWORD: ${BUDGET_DB_PASSWORD:?Set BUDGET_DB_PASSWORD in .env}
+      BILLS_DB_PASSWORD: ${BILLS_DB_PASSWORD:?Set BILLS_DB_PASSWORD in .env}
     ports:
       - "127.0.0.1:1433:1433"
     volumes:
-      - sqlserver_data:/var/opt/mssql
+      - sqlserver_data_v2_v2:/var/opt/mssql
     healthcheck:
       test:
         - CMD-SHELL
@@ -20,4 +22,4 @@ services:
       start_period: 30s
 
 volumes:
-  sqlserver_data:
+  sqlserver_data_v2_v2:
