@@ -1,4 +1,3 @@
-
 services:
   sqlserver:
     image: mcr.microsoft.com/mssql/server:2022-latest
@@ -20,6 +19,61 @@ services:
       timeout: 5s
       retries: 15
       start_period: 30s
+
+  budget:
+    build:
+      context: ./services/budget
+    image: finance-budget:dev
+    environment:
+      PORT: "5001"
+      DB_HOST: sqlserver
+      DB_PORT: "1433"
+      DB_NAME: budget_db
+      DB_USER: budget_user
+      DB_PASSWORD: ${BUDGET_DB_PASSWORD:?Set BUDGET_DB_PASSWORD in .env}
+      BILLS_URL: http://bills:5002
+    ports:
+      - "127.0.0.1:5001:5001"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/health', timeout=5)"
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  bills:
+    build:
+      context: ./services/bills
+    image: finance-bills:dev
+    environment:
+      PORT: "5002"
+      DB_HOST: sqlserver
+      DB_PORT: "1433"
+      DB_NAME: bills_db
+      DB_USER: bills_user
+      DB_PASSWORD: ${BILLS_DB_PASSWORD:?Set BILLS_DB_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5002:5002"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5002/health', timeout=5)"
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
 volumes:
   sqlserver_data_v2_v2:
