@@ -7,11 +7,31 @@
     const $ = (selector) => document.querySelector(selector);
     const money = (value) => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(Number(value || 0));
     const notify = (message, error = false) => { const node = $('#notification'); node.textContent = message; node.className = `notification show${error ? ' error' : ''}`; setTimeout(() => node.className = 'notification', 3500); };
+    const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
     async function api(base, path, options = {}) {
-        const response = await fetch(`${base}${path}`, { headers: { 'Content-Type': 'application/json' }, ...options });
-        let body = {}; try { body = await response.json(); } catch (_) {}
-        if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
-        return body;
+        const readOnly = (options.method || 'GET').toUpperCase() === 'GET';
+        const attempts = readOnly ? 3 : 1;
+        for (let attempt = 0; attempt < attempts; attempt += 1) {
+            try {
+                const response = await fetch(`${base}${path}`, { headers: { 'Content-Type': 'application/json' }, ...options });
+                let body = {}; try { body = await response.json(); } catch (_) {}
+                if (response.ok) return body;
+                const retryable = readOnly && [502, 503, 504].includes(response.status) && attempt < attempts - 1;
+                if (retryable) { await sleep(500 * (2 ** attempt)); continue; }
+                if ([502, 503, 504].includes(response.status)) {
+                    throw new Error('The service is temporarily unavailable while its database starts. Please try again shortly.');
+                }
+                throw new Error(body.error || `Request failed (${response.status})`);
+            } catch (error) {
+                const retryable = readOnly && error instanceof TypeError && attempt < attempts - 1;
+                if (retryable) { await sleep(500 * (2 ** attempt)); continue; }
+                if (error instanceof TypeError) {
+                    throw new Error('The service is temporarily unavailable. Please try again shortly.');
+                }
+                throw error;
+            }
+        }
+        throw new Error('The service is temporarily unavailable. Please try again shortly.');
     }
     const json = (method, data) => ({ method, body: JSON.stringify(data) });
     function showPage() { const page = (location.hash || '#dashboard').slice(1); document.querySelectorAll('.page-section').forEach(section => section.classList.toggle('active', section.id === page)); }

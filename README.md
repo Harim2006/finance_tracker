@@ -370,3 +370,52 @@ The host port bindings can be remapped for isolated verification with
 The static UI preserves the original workflows: dashboard summaries, envelope
 creation/allocation/spending, monthly rollover, simulated purchases, recurring
 bill creation, payments, deactivation, and financial questions/insights.
+
+## Azure SQL compatibility and resilience
+
+The backend services use `DATABASE_URL` as their primary deployment contract.
+The URL format is:
+
+```text
+mssql://<url-encoded-user>:<url-encoded-password>@<server>.database.windows.net:1433/<database>?encrypt=true&trustservercertificate=false
+```
+
+The `pymssql` 2.4.6 driver maps `encrypt=true` to its supported
+`encryption="required"` connection option. Certificate-bypass URLs are
+rejected. Docker Compose remains backward compatible with its existing
+`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` variables when
+`DATABASE_URL` is not set.
+
+The local Compose database path remains `db/init.py`, which uses the local SQL
+Server administrator and server-level logins. Azure SQL uses the separate
+`db/azure_init.py` path against already-provisioned databases. It connects to
+each database independently as an administrator, creates one contained user if
+needed, and grants only `db_ddladmin`, `db_datareader`, and `db_datawriter` in
+that database. It does not use `sa`, `CREATE LOGIN`, or cross-database `USE`.
+
+For Azure initialization, provide the following only through a secure runtime
+or CI environment; do not commit them:
+
+```text
+AZURE_BUDGET_ADMIN_DATABASE_URL
+AZURE_BUDGET_DB_USER
+AZURE_BUDGET_DB_PASSWORD
+AZURE_BILLS_ADMIN_DATABASE_URL
+AZURE_BILLS_DB_USER
+AZURE_BILLS_DB_PASSWORD
+```
+
+The migration runner preserves the existing transactional tracking table and
+skip behavior. For independent Azure migration connections, set
+`BUDGET_MIGRATION_DATABASE_URL` and `BILLS_MIGRATION_DATABASE_URL` to the
+appropriate service-specific URLs and invoke `db/migrate.py` explicitly. If
+they are absent, the existing local administrator migration configuration is
+used. Migrations are not run by either web service and are never retried after
+a commit has started.
+
+Web-service connection establishment retries only known transient failures,
+including Azure SQL serverless cold-start codes 40613 and 40197, with bounded
+exponential backoff. Authentication and configuration failures are not retried.
+Health continues to return HTTP 503 when the database is unavailable. The
+static UI retries only read-only GET requests for transient 502/503/504 or
+network failures; financial write requests are never automatically retried.

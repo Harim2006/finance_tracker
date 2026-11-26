@@ -7,6 +7,8 @@ from pathlib import Path
 import pymssql
 from dotenv import load_dotenv
 
+from sql_connection import connect_with_retry, parse_database_url
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -19,17 +21,25 @@ DATABASES = {
 }
 
 
-def run_migrations(database_name, migrations_dir):
-    connection = pymssql.connect(
-        server=os.getenv("DB_HOST", "127.0.0.1"),
-        port=os.getenv("DB_PORT", "1433"),
-        user=os.getenv("MIGRATION_DB_USER", "sa"),
-        password=os.environ["MSSQL_SA_PASSWORD"],
-        database=database_name,
-        login_timeout=15,
-        timeout=60,
-        autocommit=False,
+def local_migration_config(database_name):
+    return {
+        "server": os.getenv("DB_HOST", "127.0.0.1"),
+        "port": os.getenv("DB_PORT", "1433"),
+        "user": os.getenv("MIGRATION_DB_USER", "sa"),
+        "password": os.environ["MSSQL_SA_PASSWORD"],
+        "database": database_name,
+    }
+
+
+def run_migrations(database_name, migrations_dir, connection_url=None):
+    """Apply one service's migrations using only that service's database."""
+
+    config = (
+        parse_database_url(connection_url)
+        if connection_url
+        else local_migration_config(database_name)
     )
+    connection = connect_with_retry(config, autocommit=False)
 
     try:
         cursor = connection.cursor()
@@ -93,7 +103,11 @@ def run_migrations(database_name, migrations_dir):
 
 
 if __name__ == "__main__":
+    azure_urls = {
+        "budget_db": os.getenv("BUDGET_MIGRATION_DATABASE_URL"),
+        "bills_db": os.getenv("BILLS_MIGRATION_DATABASE_URL"),
+    }
     for database, directory in DATABASES.items():
-        run_migrations(database, directory)
+        run_migrations(database, directory, azure_urls[database])
 
     print("All database migrations completed successfully.")

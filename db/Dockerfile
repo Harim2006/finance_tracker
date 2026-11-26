@@ -8,7 +8,7 @@ COPY db/requirements.txt /app/requirements.txt
 
 RUN pip install --no-cache-dir --only-binary=pymssql -r requirements.txt
 
-COPY db/init.py db/migrate.py db/init.sql /app/db/
+COPY db/init.py db/migrate.py db/init.sql db/sql_connection.py db/azure_init.py /app/db/
 
 COPY services/budget/migrations/ /app/services/budget/migrations/
 

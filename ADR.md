@@ -155,3 +155,37 @@ backend container recreation does not leave stale upstream IP addresses.
 - **Negative**: The UI delivery container must be deployed alongside the
   backend services for the local/Compose proxy paths. Azure Static Website
   deployment needs its public API origins configured separately.
+
+## 8. Azure SQL Connection and Initialization Boundary
+Date: 2026-11-26
+Status: Decided
+
+**Context**: Azure SQL logical servers do not provide the local Docker SQL
+Server `sa`/server-login workflow. Azure SQL serverless databases can also be
+paused and return transient connection errors while resuming.
+
+**Decision**: Keep the existing Compose initialization path unchanged and add
+`db/azure_init.py` for already-provisioned Azure databases. The Azure path
+connects independently to each database, creates contained users idempotently,
+and grants only the required database roles. `DATABASE_URL` is the primary
+service contract, with the existing Compose variables retained as a fallback.
+The `pymssql` encryption option is used for Azure URLs and certificate bypasses
+are rejected. Only connection establishment retries known transient failures;
+financial operations are not retried after a request has begun.
+
+**Alternatives considered**:
+
+- **Use `sa` and `CREATE LOGIN` in Azure**: Rejected because it is not an Azure
+  SQL contained-user deployment model and would violate database isolation.
+- **Retry all database operations**: Rejected because a financial write may
+  have committed before a connection error is observed.
+- **Replace the existing migrations**: Rejected because the current versioned
+  migrations are already SQL Server compatible and transactional.
+
+**Consequences**:
+
+- **Positive**: Local Compose behavior remains unchanged; Azure credentials and
+  databases are isolated; cold-start failures become controlled 503 responses.
+- **Negative**: Azure setup must run the explicit contained-user initializer
+  and service-specific migration URLs, and live Azure SQL verification remains
+  pending until the resources exist.
