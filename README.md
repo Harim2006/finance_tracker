@@ -330,3 +330,43 @@ were removed, and automated tests were expanded from 21 to 105.
 
 The corrected application provides the baseline for the
 subsequent deployment assignment.
+
+## Assignment 2 Static Frontend
+
+The Assignment 2 frontend is an independent static site in [`ui/`](ui/). It
+uses vanilla HTML, CSS and JavaScript and calls the Budget Service on port 5001
+and the Bills Service on port 5002 directly from the browser. It does not add
+another application backend or access SQL Server directly.
+
+For local development, start the complete delivery with Docker Compose:
+
+```powershell
+docker compose up -d --build
+```
+
+Open <http://localhost:8080>. Nginx serves the static files and reverse-proxies
+same-origin `/api/budget/*` and `/api/bills/*` requests to the two backend
+containers. Docker service names are used only inside the Compose network and
+are never exposed to browser JavaScript. No third application backend is
+created.
+
+For standalone static development, serve `ui/` on another port and use the
+direct API origins in [`ui/config.js`](ui/config.js):
+
+```powershell
+python -m http.server 8081 --directory ui
+```
+
+The Compose image replaces that file with [`ui/config.compose.js`](ui/config.compose.js)
+so the container uses the Nginx proxy paths. For Azure Storage Static Website
+deployment, provide the public Budget and Bills API origins in the deployed
+configuration and set each API's `UI_ORIGIN` to the static site's HTTPS origin.
+The APIs restrict CORS responses to that origin when called directly.
+
+The host port bindings can be remapped for isolated verification with
+`SQLSERVER_HOST_PORT`, `BUDGET_HOST_PORT`, `BILLS_HOST_PORT`, and
+`UI_HOST_PORT`; their defaults remain 1433, 5001, 5002, and 8080.
+
+The static UI preserves the original workflows: dashboard summaries, envelope
+creation/allocation/spending, monthly rollover, simulated purchases, recurring
+bill creation, payments, deactivation, and financial questions/insights.

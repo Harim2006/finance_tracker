@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Personal Finance Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="shell header-inner">
+            <a class="brand" href="#dashboard">Personal Finance Tracker</a>
+            <nav aria-label="Primary navigation">
+                <a href="#dashboard">Dashboard</a>
+                <a href="#envelopes">Envelopes</a>
+                <a href="#bills">Bills</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="shell">
+        <div id="notification" class="notification" role="status" aria-live="polite"></div>
+
+        <section id="dashboard" class="page-section">
+            <div class="page-heading">
+                <div><p class="eyebrow">Overview</p><h1>Financial dashboard</h1></div>
+                <button class="button secondary" data-action="refresh">Refresh</button>
+            </div>
+            <div class="stats-grid">
+                <article class="stat-card purple"><span>Total budget</span><strong id="total-allocated">—</strong></article>
+                <article class="stat-card pink"><span>Spent this month</span><strong id="spent-month">—</strong></article>
+                <article class="stat-card blue"><span>Bills due in 30 days</span><strong id="upcoming-bills">—</strong></article>
+            </div>
+            <div class="two-column">
+                <article class="panel"><div class="panel-heading"><h2>Budget envelopes</h2><a href="#envelopes">View all</a></div><div id="dashboard-envelopes" class="table-wrap"></div></article>
+                <article class="panel"><div class="panel-heading"><h2>Upcoming bills</h2><a href="#bills">View all</a></div><div id="dashboard-bills" class="table-wrap"></div></article>
+            </div>
+            <div class="two-column">
+                <article class="panel">
+                    <div class="panel-heading"><h2>Simulate a purchase</h2><span class="muted">Uses automatic categorisation</span></div>
+                    <form id="purchase-form" class="form-grid"><label>Merchant<input name="merchant" required placeholder="Walmart"></label><label>Amount<input name="amount" type="number" min="0.01" step="0.01" required placeholder="50.00"></label><label class="wide">Description<input name="description" placeholder="Weekly groceries"></label><button class="button" type="submit">Record purchase</button></form>
+                </article>
+                <article class="panel"><div class="panel-heading"><h2>Financial assistant</h2><span class="muted">Rule-based insights</span></div><form id="question-form" class="question-form"><input name="question" required placeholder="Am I overspending?"><button class="button" type="submit">Ask</button></form><div id="answer" class="answer muted">Ask a question about your finances.</div><div id="insights" class="insights"></div></article>
+            </div>
+        </section>
+
+        <section id="envelopes" class="page-section">
+            <div class="page-heading"><div><p class="eyebrow">Budgeting</p><h1>Envelopes</h1></div><button class="button" data-modal="envelope-modal">+ Add envelope</button></div>
+            <article class="panel"><div class="panel-heading"><h2>Your envelopes</h2><button class="button secondary" data-action="rollover">Run monthly rollover</button></div><div id="envelopes-list" class="envelope-grid"></div></article>
+        </section>
+
+        <section id="bills" class="page-section">
+            <div class="page-heading"><div><p class="eyebrow">Recurring costs</p><h1>Bills & subscriptions</h1></div><button class="button" data-modal="bill-modal">+ Add bill</button></div>
+            <article class="panel"><div class="panel-heading"><h2>Active bills</h2><span id="bill-count" class="muted"></span></div><div id="bills-list" class="table-wrap"></div></article>
+        </section>
+    </main>
+
+    <dialog id="envelope-modal"><form id="envelope-form" method="dialog" class="modal-form"><button class="close" type="button" data-close>&times;</button><h2>Add envelope</h2><label>Name<input name="name" required placeholder="Groceries"></label><label>Monthly allocation<input name="monthly_allocation" type="number" min="0" step="0.01" required placeholder="500.00"></label><label>Overspend rule<select name="overspend_rule"><option value="stop">Stop at zero</option><option value="borrow">Allow borrowing</option></select></label><button class="button" type="submit">Create envelope</button></form></dialog>
+    <dialog id="bill-modal"><form id="bill-form" method="dialog" class="modal-form"><button class="close" type="button" data-close>&times;</button><h2>Add recurring bill</h2><label>Name<input name="name" required placeholder="Netflix"></label><label>Amount<input name="amount" type="number" min="0.01" step="0.01" required placeholder="15.99"></label><label>Frequency<select name="frequency"><option>monthly</option><option>quarterly</option><option>yearly</option><option>weekly</option><option>biweekly</option></select></label><label>Due day<input name="due_day" type="number" min="1" max="31" required placeholder="5"></label><label>Category<select name="category"><option>utilities</option><option>entertainment</option><option>transportation</option><option>health</option><option>housing</option><option>insurance</option><option>other</option></select></label><button class="button" type="submit">Add bill</button></form></dialog>
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

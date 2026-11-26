@@ -108,3 +108,50 @@ Status: Decided
 - **Documentation**: Clearly labeled as "simulated LLM" in code comments and documentation so it's not misleading.
 
 **Implementation**: See `llm_analyzer.py` for pattern matching and response generation logic.
+
+## 6. Static Frontend Boundary
+Date: 2026-11-26
+Status: Decided
+
+**Context**: Assignment 2 requires the user interface to be independent from
+the two backend services and deployable as an Azure Storage Static Website.
+
+**Decision**: Build the frontend as vanilla HTML, CSS and JavaScript in `ui/`.
+The browser calls the Budget and Bills REST APIs using configurable base URLs.
+The frontend does not contain server-side templates, database access, or a
+third application backend.
+
+**Alternatives considered**:
+- **Keep the original Flask templates**: Rejected because they depend on the
+  monolithic Flask process and post forms back to routes that no longer own the
+  data.
+- **Add a frontend backend or proxy service**: Rejected because it adds an
+  unnecessary deployable service and conflicts with the static UI requirement.
+
+**Consequences**:
+- **Positive**: The UI can be uploaded directly to Azure Storage Static Website,
+  backend services remain independently deployable, and API boundaries are
+  visible in browser network calls.
+- **Negative**: API origins and CORS configuration must be set correctly for
+  each environment. This is handled through `ui/config.js` and `UI_ORIGIN`.
+
+## 7. Static Delivery and API Proxy
+Date: 2026-11-26
+Status: Decided
+
+**Context**: A browser cannot resolve Docker service names such as `budget` and
+`bills`, and direct cross-origin API calls require environment-specific CORS
+configuration.
+
+**Decision**: Deliver `ui/` with an Nginx Alpine container. Nginx serves the
+static assets and proxies `/api/budget/*` and `/api/bills/*` to the existing
+Budget and Bills containers. The proxy uses Docker's embedded DNS resolver so
+backend container recreation does not leave stale upstream IP addresses.
+
+**Consequences**:
+- **Positive**: Browser requests are same-origin, Docker-only service names stay
+  inside the Compose network, and the two domain services remain the only
+  application backends.
+- **Negative**: The UI delivery container must be deployed alongside the
+  backend services for the local/Compose proxy paths. Azure Static Website
+  deployment needs its public API origins configured separately.

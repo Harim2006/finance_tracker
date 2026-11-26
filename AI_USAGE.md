@@ -69,6 +69,9 @@ A: "FinanceLLMAnalyzer in llm_analyzer.py uses pattern matching, not a real AI. 
 
 ## AI Tools Used
 
+| 2026-11-26 | Codex | "Convert the existing frontend into an independent static HTML/CSS/JavaScript frontend that communicates with the two backend APIs." | Accepted with review | Added the `ui/` static frontend, configurable API origins, and documentation for the static deployment boundary. | The browser loads the static files, fetches data from the Budget and Bills APIs, renders the dashboard, and submits JSON requests for envelope and bill operations. No frontend server or database connection is involved. |
+| 2026-11-26 | Codex | "Integrate the static frontend with Docker Compose and verify it end to end." | Accepted with review | Added Nginx Alpine static delivery, same-origin API proxying, dynamic Docker DNS resolution, and isolated HTTP/browser verification. | Nginx serves the UI and forwards browser requests to Budget and Bills. The browser never resolves Docker hostnames, and dynamic DNS prevents stale upstream addresses after backend restarts. |
+
 1. **Claude (Anthropic)**: Primary assistant for code generation, architecture advice, and documentation
 2. **GitHub Copilot**: Auto-completion for repetitive code patterns
 3. **ChatGPT**: Quick lookups for Python syntax and SQL queries

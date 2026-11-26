@@ -8,7 +8,7 @@ services:
       BUDGET_DB_PASSWORD: ${BUDGET_DB_PASSWORD:?Set BUDGET_DB_PASSWORD in .env}
       BILLS_DB_PASSWORD: ${BILLS_DB_PASSWORD:?Set BILLS_DB_PASSWORD in .env}
     ports:
-      - "127.0.0.1:1433:1433"
+      - "127.0.0.1:${SQLSERVER_HOST_PORT:-1433}:1433"
     volumes:
       - sqlserver_data_v2_v2:/var/opt/mssql
     healthcheck:
@@ -49,7 +49,7 @@ services:
       DB_PASSWORD: ${BUDGET_DB_PASSWORD:?Set BUDGET_DB_PASSWORD in .env}
       BILLS_URL: http://bills:5002
     ports:
-      - "127.0.0.1:5001:5001"
+      - "127.0.0.1:${BUDGET_HOST_PORT:-5001}:5001"
     depends_on:
       sqlserver:
         condition: service_healthy
@@ -78,7 +78,7 @@ services:
       DB_USER: bills_user
       DB_PASSWORD: ${BILLS_DB_PASSWORD:?Set BILLS_DB_PASSWORD in .env}
     ports:
-      - "127.0.0.1:5002:5002"
+      - "127.0.0.1:${BILLS_HOST_PORT:-5002}:5002"
     depends_on:
       sqlserver:
         condition: service_healthy
@@ -94,6 +94,18 @@ services:
       timeout: 10s
       retries: 5
       start_period: 20s
+
+  ui:
+    build:
+      context: ./ui
+    image: finance-ui:dev
+    ports:
+      - "127.0.0.1:${UI_HOST_PORT:-8080}:80"
+    depends_on:
+      budget:
+        condition: service_healthy
+      bills:
+        condition: service_healthy
 
 volumes:
   sqlserver_data_v2_v2:
