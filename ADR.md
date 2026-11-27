@@ -156,7 +156,7 @@ backend container recreation does not leave stale upstream IP addresses.
   backend services for the local/Compose proxy paths. Azure Static Website
   deployment needs its public API origins configured separately.
 
-## 8. Azure SQL Connection and Initialization Boundary
+## 8. Azure Serverless Hosting and Database Boundary
 Date: 2026-11-26
 Status: Decided
 
@@ -202,8 +202,8 @@ Microsoft Entra login authorized the Static Website configuration under the
 existing Owner role. The public website endpoint is separate from the Blob
 endpoint's anonymous access setting.
 
-Azure registered the five assignment providers. The resource inventory
-contains the single storage account in the intended group. Azure reported
+Azure registered the five assignment providers. At that checkpoint the
+storage account was the group's only deployed resource. Azure reported
 Static Website enabled with `index.html`, and the public HTTPS endpoint
 returned `404 WebContentNotFound` while the site was empty. Standard Hot
 storage keeps the idle cost close to zero, with charges based on usage.
@@ -215,6 +215,29 @@ the approved region viable for the group and static site. SQL region selection
 and free-offer verification belong to the database milestone.
 
 [Provisioning commands and verification](README.md#step-231-resource-group-and-static-website-november-27-2026) · [Azure Static Website access and pricing](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blob-static-website)
+
+### Step 23.3 Container Apps and logging infrastructure
+
+Decided on November 27, 2026.
+
+Use one workload profiles v2 environment with its built-in Consumption
+profile in Austria East. This region is policy-allowed and supports the
+intended SQL SKU. The storage account is in Germany West Central. Both
+regions' resources belong to the original assignment resource group.
+
+Azure CLI created a single linked Log Analytics workspace as part of
+environment provisioning. The environment and workspace reported
+`Succeeded`. The workspace uses pay-as-you-go pricing and 30-day
+retention. Its 0.1 GB/day cap makes unexpected ingestion spikes less
+expensive while preserving headroom for normal debugging. Collection can
+pause until the daily reset when billable logs reach the cap.
+
+Consumption allows app replicas to scale to zero and charges based on
+usage. This step establishes the environment and its logging destination.
+The database milestone remains blocked because the subscription has one
+free SQL database slot and the assignment requires two.
+
+[Provisioning commands and verification](README.md#step-233-container-apps-environment-and-log-analytics-november-27-2026) · [Container Apps billing](https://learn.microsoft.com/en-us/azure/container-apps/billing)
 
 ## 9. Independent OpenAPI contracts for Budget and Bills
 
@@ -262,3 +285,19 @@ Regression tests verify the 400 schema, compatibility defaults, and failure
 handling at the Flask boundary. Both OpenAPI documents validated and all
 149 tests passed. Live HTTP probes and a Chrome smoke test exercised the
 rebuilt Compose stack.
+
+## 10. Dedicated Compute Capacity
+
+Decided on November 27, 2026.
+
+**Context** — Budget and Bills serve intermittent requests. Assignment 2
+requires consumption pricing and scale-to-zero for the services.
+
+**Decision** — Rely on the shared Consumption profile for both services.
+This leaves always-on dedicated capacity outside the project scope and
+avoids a dedicated management fee.
+
+**When to revisit** — Measure replica utilization, response latency, and
+cost under sustained traffic. Dedicated capacity would warrant evaluation
+if those measurements justify a named amount of reserved capacity and a
+later deployment permits its recurring cost.

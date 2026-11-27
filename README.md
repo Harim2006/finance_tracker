@@ -636,8 +636,8 @@ curl.exe --head $websiteUrl
 az resource list --subscription $studentSubscription --query '[].{name:name,type:type,region:location}' --output table
 ```
 
-The rerun found the existing group and account with matching settings. Azure
-reported the storage account as the subscription's only resource. The HTTPS
+The rerun found the existing group and account with matching settings. At
+the end of Step 23.1, Azure listed only the storage account. The HTTPS
 probe returned `404 WebContentNotFound`, the expected response from the
 enabled, empty website before UI deployment.
 
@@ -647,3 +647,111 @@ operations, and applicable outbound transfer. The first-tier Germany West
 Central Hot LRS retail rates observed were USD 0.0196 per GB-month and
 USD 0.054 per 10,000 writes. The subscription spending limit is on.
 [Azure Static Website pricing](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blob-static-website#pricing) · [Azure Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices)
+
+### Step 23.3 Container Apps environment and Log Analytics (November 27, 2026)
+
+Austria East was on the Azure for Students allowlist and had one available
+Container Apps environment slot. It also reported eligibility for the
+intended SQL serverless SKU. The requested setup places the environment and
+workspace in Austria East and the static website storage in Germany West
+Central, in the same assignment resource group. The deployment guide's
+default layout places non-SQL resources in one region.
+
+| Setting | Verified value |
+|---------|----------------|
+| Resource group | `rg-hssmallela-ieu2024` |
+| Container Apps environment | `hssmallela-ieu2024-env` |
+| Environment region and provisioning state | Austria East (`austriaeast`), `Succeeded` |
+| Environment configuration | Workload profiles v2 with a single `Consumption` profile |
+| Logs destination | `log-analytics` |
+| Auto-created workspace | `workspace-rghssmallelaieu2024KkRy` |
+| Workspace region and provisioning state | Austria East (`austriaeast`), `Succeeded` |
+| Workspace pricing | `PerGB2018` pay-as-you-go |
+| Workspace retention and daily cap | 30 days, 0.1 GB/day, `RespectQuota` |
+| Container Apps deployed | 0 |
+| Subscription spending limit | `On` |
+
+Azure CLI 2.93.0 created and linked the workspace in the assignment group
+when the environment was created with `--logs-destination log-analytics`.
+The final inventory contained the storage account, the environment, and one
+workspace. Azure reported the built-in Consumption profile, zone redundancy
+off, and an empty custom subnet and private endpoint configuration.
+
+The provisioning commands below check for an existing environment or
+workspace before invoking automatic creation. On the deployed setup, use the
+verification block.
+
+```powershell
+$account = az account show --query '{id:id,name:name,state:state,signIn:user.name}' --output json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or $account.name -ne 'Azure for Students' -or
+    $account.state -ne 'Enabled' -or ($account.signIn -split '@', 2)[0] -ne 'hssmallela.ieu2024') {
+    throw 'Select the enabled Azure for Students subscription for this assignment.'
+}
+$studentSubscription = $account.id
+$deploymentGroup = 'rg-hssmallela-ieu2024'
+$environmentName = 'hssmallela-ieu2024-env'
+$environmentRegion = 'austriaeast'
+
+$resourceTypes = @(az resource list --resource-group $deploymentGroup --subscription $studentSubscription `
+    --query '[].type' --output tsv --only-show-errors)
+if ($LASTEXITCODE -ne 0) { throw 'Could not check the existing resources.' }
+if ($resourceTypes -contains 'Microsoft.App/managedEnvironments' -or
+    $resourceTypes -contains 'Microsoft.OperationalInsights/workspaces') {
+    throw 'An environment or workspace already exists. Check the current resources before provisioning.'
+}
+az containerapp env create --name $environmentName --resource-group $deploymentGroup `
+    --location $environmentRegion --subscription $studentSubscription `
+    --enable-workload-profiles true --logs-destination log-analytics --no-wait --output none --only-show-errors
+if ($LASTEXITCODE -ne 0) { throw 'Environment creation failed. Check the inventory for any workspace Azure created.' }
+```
+
+Once the environment reports `Succeeded`, verify the workspace association
+and apply retention and the ingestion cap.
+
+```powershell
+$environmentResult = az containerapp env show --name $environmentName --resource-group $deploymentGroup `
+    --subscription $studentSubscription `
+    --query '{state:properties.provisioningState,destination:properties.appLogsConfiguration.destination,workspaceId:properties.appLogsConfiguration.logAnalyticsConfiguration.customerId}' `
+    --output json --only-show-errors | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or $environmentResult.state -ne 'Succeeded' -or
+    $environmentResult.destination -ne 'log-analytics' -or -not $environmentResult.workspaceId) {
+    throw 'The environment must be ready and have a Log Analytics destination.'
+}
+$workspaceRecords = az monitor log-analytics workspace list --resource-group $deploymentGroup `
+    --subscription $studentSubscription --query '[].{name:name,workspaceId:customerId,sku:sku.name}' `
+    --output json --only-show-errors | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or @($workspaceRecords).Count -ne 1 -or
+    $workspaceRecords[0].workspaceId -ne $environmentResult.workspaceId -or
+    $workspaceRecords[0].sku -ne 'PerGB2018') {
+    throw 'Expected a single associated pay-as-you-go workspace.'
+}
+$workspaceName = $workspaceRecords[0].name
+az monitor log-analytics workspace update --resource-group $deploymentGroup --workspace-name $workspaceName `
+    --subscription $studentSubscription --retention-time 30 --quota 0.1 --output none --only-show-errors
+if ($LASTEXITCODE -ne 0) { throw 'Could not configure the Log Analytics workspace.' }
+
+az containerapp env show --name $environmentName --resource-group $deploymentGroup `
+    --subscription $studentSubscription `
+    --query '{name:name,region:location,state:properties.provisioningState,profiles:properties.workloadProfiles[].name,logs:properties.appLogsConfiguration.destination}' `
+    --output json --only-show-errors
+az monitor log-analytics workspace show --resource-group $deploymentGroup --workspace-name $workspaceName `
+    --subscription $studentSubscription `
+    --query '{name:name,region:location,sku:sku.name,state:provisioningState,retention:retentionInDays,dailyCapGB:workspaceCapping.dailyQuotaGb,ingestionStatus:workspaceCapping.dataIngestionStatus}' `
+    --output json --only-show-errors
+```
+
+The environment has no fixed compute charge with its built-in Consumption
+profile. Expected idle cost for the environment and workspace is
+approximately USD 0 monthly. Austria East retail rates for future active
+apps were USD 0.000031 per vCPU-second, USD 0.000004 per GiB-second, and
+USD 0.40 per million requests outside the included allowances. Analytics
+Logs ingestion was USD 2.99/GB after the first 5 GB per billing account each
+month. Thirty-day retention is within included retention. The 0.1 GB/day
+cap allows about 3.1 GB in a 31-day month at the cap, enough headroom for
+routine debugging of the two small services. Azure can ingest some data
+above the cap before it pauses billable collection until the daily reset.
+[Container Apps billing](https://learn.microsoft.com/en-us/azure/container-apps/billing) · [Azure Monitor pricing](https://azure.microsoft.com/en-us/pricing/details/monitor/) · [Daily cap behavior](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/daily-cap) · [Azure Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices)
+
+Step 23.2 remains blocked. Azure SQL reported a subscription-wide
+`FreeLimitQuota` of one with no slots used. The two database resources
+remain pending.
