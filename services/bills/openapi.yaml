@@ -1,0 +1,440 @@
+openapi: 3.0.3
+info:
+  title: Finance Tracker Bills API
+  version: 1.0.0
+  description: |
+    Recurring bills, payment records, due dates and projections.
+    Send JSON objects with Content-Type: application/json where a body is required.
+    Flask also serves HEAD on GET routes and OPTIONS for preflight. Responses vary
+    by Origin. The origin configured by UI_ORIGIN can use GET, POST and OPTIONS
+    with the Content-Type header. Unmatched routes and unhandled exceptions use
+    Flask's HTML error pages.
+servers:
+  - url: http://localhost:5002
+    description: Default local Bills service
+paths:
+  /health:
+    get:
+      operationId: getBillsHealth
+      summary: Check Bills database readiness and report the build version
+      description: Checks read and write access to the bills table and rolls back the probe.
+      responses:
+        '200': { $ref: '#/components/responses/Healthy' }
+        '503': { $ref: '#/components/responses/Unhealthy' }
+  /bills:
+    get:
+      operationId: listBills
+      summary: List active bills in next-due-date order
+      responses:
+        '200': { $ref: '#/components/responses/BillList' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /bills/create:
+    post:
+      operationId: createBill
+      summary: Create a recurring bill and its first unpaid occurrence
+      description: Each successful request creates a new bill, including repeating an identical request.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, amount, frequency, due_day]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  pattern: '\S'
+                  description: Surrounding whitespace is stripped. The stored name fits NVARCHAR(255).
+                amount: { $ref: '#/components/schemas/PositiveAmount' }
+                frequency: { $ref: '#/components/schemas/Frequency' }
+                due_day:
+                  description: |
+                    Integer or integer string. The inclusive limits are 1–7 for weekly,
+                    1–14 for biweekly, 1–31 for monthly, 1–90 for quarterly and 1–365
+                    for yearly. Monthly uses the day of the month, capped at month end.
+                    Yearly uses the day of the year for the first occurrence. Weekly,
+                    biweekly and quarterly use the initial offset in days from today,
+                    with the maximum value scheduling the first occurrence tomorrow.
+                  oneOf:
+                    - { type: integer, minimum: 1, maximum: 365 }
+                    - { type: string, pattern: '^\s*[+]?\d(?:_?\d)*\s*$' }
+                category:
+                  type: string
+                  nullable: true
+                  maxLength: 255
+                  default: other
+                  description: Free-form category text.
+            example: { name: Internet, amount: 45.0, frequency: monthly, due_day: 15, category: utilities }
+      responses:
+        '201':
+          description: Bill created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status]
+                additionalProperties: false
+                properties:
+                  id: { $ref: '#/components/schemas/Id' }
+                  status: { type: string, enum: [created] }
+              example: { id: 3, status: created }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '409': { $ref: '#/components/responses/DatabaseConflict' }
+        '500': { $ref: '#/components/responses/UnexpectedError' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /bills/{bill_id}/pay:
+    parameters:
+      - $ref: '#/components/parameters/BillId'
+    post:
+      operationId: payBill
+      summary: Pay the oldest unpaid occurrence and advance the bill due date
+      description: |
+        A successful payment creates the next unpaid occurrence. Repeating a
+        successful request may pay the next occurrence and advance the bill again.
+        An empty JSON object uses today's date and the bill's configured amount.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                payment_date:
+                  description: |
+                    ISO 8601 date. Send YYYY-MM-DD for interoperability. The service
+                    also accepts compact and week dates parsed by Python 3.11
+                    date.fromisoformat. Omission, null or an empty string uses today's date.
+                  type: string
+                  nullable: true
+                  pattern: '^(?:\d{4}(?:-\d{2}-\d{2}|\d{4}|-W\d{2}(?:-\d)?|W\d{2}\d?)|)$'
+                  example: '2026-11-15'
+                amount_paid:
+                  description: Defaults to the bill's amount if omitted, null or an empty string.
+                  oneOf:
+                    - { $ref: '#/components/schemas/PositiveAmount' }
+                    - { type: string, nullable: true, enum: ['', null] }
+            example: { payment_date: '2026-11-15', amount_paid: 45.0 }
+      responses:
+        '200':
+          description: Payment recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                additionalProperties: false
+                properties:
+                  status: { type: string, enum: [paid] }
+              example: { status: paid }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '404': { $ref: '#/components/responses/BillNotFound' }
+        '409':
+          description: The bill is inactive, no unpaid occurrence exists, or a database constraint was violated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                inactive: { value: { error: Bill is inactive } }
+                noUnpaidOccurrence: { value: { error: No unpaid occurrence found } }
+        '500': { $ref: '#/components/responses/UnexpectedError' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /bills/{bill_id}/deactivate:
+    parameters:
+      - $ref: '#/components/parameters/BillId'
+    post:
+      operationId: deactivateBill
+      summary: Deactivate a bill and retain its payment history
+      description: Repeated calls for an existing bill return 200 and keep the bill inactive. A request body is ignored.
+      responses:
+        '200':
+          description: Bill is inactive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                additionalProperties: false
+                properties:
+                  status: { type: string, enum: [deactivated] }
+              example: { status: deactivated }
+        '404': { $ref: '#/components/responses/BillNotFound' }
+        '409': { $ref: '#/components/responses/DatabaseConflict' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /bills/upcoming:
+    get:
+      operationId: projectUpcomingBills
+      summary: Project recurring occurrences through a future cutoff
+      description: Starts at each active bill's next due date, including overdue occurrences, and sorts by due date.
+      parameters:
+        - name: months
+          in: query
+          description: Months added to today for the inclusive projection cutoff.
+          schema: { type: integer, minimum: 1, maximum: 120, default: 3 }
+          example: 3
+      responses:
+        '200':
+          description: Upcoming occurrences and their payment or projection statuses
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/ProjectedOccurrence' } }
+              example:
+                - { bill_id: 3, bill_name: Internet, amount: 45.0, due_date: '2026-12-15', category: utilities, status: unpaid }
+                - { bill_id: 3, bill_name: Internet, amount: 45.0, due_date: '2027-01-15', category: utilities, status: projected }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /bills/due:
+    get:
+      operationId: listBillsDue
+      summary: List active bills due through a future cutoff, including overdue bills
+      parameters:
+        - name: days
+          in: query
+          description: Days added to today for the inclusive cutoff on the next due date.
+          schema: { type: integer, minimum: 1, maximum: 3650, default: 30 }
+          example: 30
+      responses:
+        '200': { $ref: '#/components/responses/BillList' }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /bills/unpaid:
+    get:
+      operationId: listUnpaidBills
+      summary: List unpaid occurrences of active bills in due-date order
+      responses:
+        '200':
+          description: Bill fields plus the unpaid occurrence's date and status
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/UnpaidBill' } }
+              example:
+                - id: 3
+                  name: Internet
+                  amount: 45.0
+                  frequency: monthly
+                  due_day: 15
+                  category: utilities
+                  auto_pay: false
+                  next_due_date: '2026-12-15'
+                  created_at: '2026-11-01T08:30:00'
+                  active: true
+                  due_date: '2026-12-15'
+                  status: unpaid
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /bills/{bill_id}/history:
+    parameters:
+      - $ref: '#/components/parameters/BillId'
+    get:
+      operationId: getBillPaymentHistory
+      summary: List paid and unpaid records for a bill
+      description: An unknown bill ID returns an empty list. History remains available after deactivation.
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum records, ordered by due date and then ID, both descending.
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 12 }
+          example: 2
+      responses:
+        '200':
+          description: Payment history
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Payment' } }
+              example:
+                - { id: 10, bill_id: 3, due_date: '2026-12-15', paid_date: null, amount_paid: null, status: unpaid }
+                - { id: 9, bill_id: 3, due_date: '2026-11-15', paid_date: '2026-11-15', amount_paid: 45.0, status: paid }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /bills/monthly-total:
+    get:
+      operationId: getMonthlyBillTotal
+      summary: Sum active bills whose next due date falls in a calendar month
+      description: Counts each matching active bill once, based on its stored next due date.
+      parameters:
+        - name: year
+          in: query
+          description: Calendar year. Defaults to the current year on the server.
+          schema: { type: integer, minimum: 1, maximum: 9998 }
+          example: 2026
+        - name: month
+          in: query
+          description: Calendar month. Defaults to the current month on the server.
+          schema: { type: integer, minimum: 1, maximum: 12 }
+          example: 12
+      responses:
+        '200':
+          description: Total amount, or zero if no bills match
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total]
+                additionalProperties: false
+                properties:
+                  total: { type: number, minimum: 0 }
+              example: { total: 45.0 }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+
+components:
+  parameters:
+    BillId:
+      name: bill_id
+      in: path
+      required: true
+      description: Numeric bill ID. Flask accepts unsigned decimal digits in the path.
+      schema: { type: integer, minimum: 0 }
+      example: 3
+  schemas:
+    Id: { type: integer, minimum: 1 }
+    Frequency: { type: string, enum: [weekly, biweekly, monthly, quarterly, yearly] }
+    PositiveAmount:
+      description: Finite amount strictly greater than zero, whether sent as a number or a numeric string.
+      oneOf:
+        - { type: number, minimum: 0, exclusiveMinimum: true }
+        - type: string
+          pattern: '^\s*[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?\s*$'
+    LocalTimestamp:
+      type: string
+      pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{6})?$'
+      description: ISO 8601 timestamp serialized without a UTC offset, with optional microseconds.
+      example: '2026-11-24T17:25:30.123456'
+    BillFields:
+      type: object
+      required: [id, name, amount, frequency, due_day, category, auto_pay, next_due_date, created_at, active]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string, maxLength: 255 }
+        amount: { type: number, minimum: 0, exclusiveMinimum: true }
+        frequency: { $ref: '#/components/schemas/Frequency' }
+        due_day: { type: integer, minimum: 1, maximum: 365 }
+        category: { type: string, nullable: true, maxLength: 255 }
+        auto_pay: { type: boolean }
+        next_due_date: { type: string, format: date, nullable: true }
+        created_at: { $ref: '#/components/schemas/LocalTimestamp' }
+        active: { type: boolean, enum: [true] }
+    Bill:
+      allOf:
+        - $ref: '#/components/schemas/BillFields'
+        - type: object
+          additionalProperties: false
+          properties: { id: {}, name: {}, amount: {}, frequency: {}, due_day: {}, category: {}, auto_pay: {}, next_due_date: {}, created_at: {}, active: {} }
+    UnpaidBill:
+      allOf:
+        - $ref: '#/components/schemas/BillFields'
+        - type: object
+          required: [due_date, status]
+          additionalProperties: false
+          properties:
+            id: {}
+            name: {}
+            amount: {}
+            frequency: {}
+            due_day: {}
+            category: {}
+            auto_pay: {}
+            next_due_date: {}
+            created_at: {}
+            active: {}
+            due_date: { type: string, format: date }
+            status: { type: string, enum: [unpaid] }
+    ProjectedOccurrence:
+      type: object
+      required: [bill_id, bill_name, amount, due_date, category, status]
+      additionalProperties: false
+      properties:
+        bill_id: { $ref: '#/components/schemas/Id' }
+        bill_name: { type: string, maxLength: 255 }
+        amount: { type: number, minimum: 0, exclusiveMinimum: true }
+        due_date: { type: string, format: date }
+        category: { type: string, nullable: true, maxLength: 255 }
+        status: { type: string, enum: [paid, unpaid, projected] }
+    Payment:
+      type: object
+      required: [id, bill_id, due_date, paid_date, amount_paid, status]
+      additionalProperties: false
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        bill_id: { $ref: '#/components/schemas/Id' }
+        due_date: { type: string, format: date }
+        paid_date: { type: string, format: date, nullable: true }
+        amount_paid: { type: number, minimum: 0, nullable: true }
+        status: { type: string, enum: [paid, unpaid] }
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error: { type: string }
+  responses:
+    Healthy:
+      description: Service and database are ready
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, db, version]
+            additionalProperties: false
+            properties:
+              status: { type: string, enum: [ok] }
+              db: { type: string, enum: [ok] }
+              version: { type: string, description: Value of GIT_SHA with dev as the local default. }
+          example: { status: ok, db: ok, version: dev }
+    Unhealthy:
+      description: The database readiness probe failed
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, db, version]
+            additionalProperties: false
+            properties:
+              status: { type: string, enum: [unavailable] }
+              db: { type: string, enum: [unavailable] }
+              version: { type: string, description: Value of GIT_SHA with dev as the local default. }
+          example: { status: unavailable, db: unavailable, version: dev }
+    BillList:
+      description: Bills in next-due-date order
+      content:
+        application/json:
+          schema: { type: array, items: { $ref: '#/components/schemas/Bill' } }
+          example:
+            - id: 3
+              name: Internet
+              amount: 45.0
+              frequency: monthly
+              due_day: 15
+              category: utilities
+              auto_pay: false
+              next_due_date: '2026-12-15'
+              created_at: '2026-11-01T08:30:00'
+              active: true
+    InvalidInput:
+      description: Invalid input, missing required field or invalid JSON object for a body-taking operation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: Unsupported bill frequency }
+    BillNotFound:
+      description: The bill does not exist
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: Bill not found }
+    DatabaseConflict:
+      description: A database constraint was violated
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: Database constraint violated }
+    UnexpectedError:
+      description: Flask HTML error page when an input of an unsupported JSON type raises an unhandled exception
+      content:
+        text/html:
+          schema: { type: string }
+    DatabaseUnavailable:
+      description: The Bills database operation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: Database unavailable }

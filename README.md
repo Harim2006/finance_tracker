@@ -180,7 +180,7 @@ Bill domain tables:
 
 No foreign keys connect the two financial domains.
 
-## API Endpoints
+## Assignment 1 API Endpoints
 
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
@@ -210,9 +210,10 @@ The table lists the principal verified endpoints.
 
 ## Running Tests
 
-Run the complete automated test suite:
+Install the test dependencies and run the complete automated suite.
 
 ```bash
+python -m pip install -r requirements-test.txt
 python -m unittest discover -v
 ```
 
@@ -238,7 +239,7 @@ python -m coverage html
 
 Open htmlcov/index.html in a browser.
 
-### Verified Test Results
+### Assignment 1 Verified Test Results
 
 Corrective iteration: November 25, 2026.
 
@@ -419,3 +420,58 @@ exponential backoff. Authentication and configuration failures are not retried.
 Health continues to return HTTP 503 when the database is unavailable. The
 static UI retries only read-only GET requests for transient 502/503/504 or
 network failures; financial write requests are never automatically retried.
+
+## Assignment 2 API contracts
+
+| Service | OpenAPI 3.0.3 document | Local base URL | Operations |
+|---------|------------------------|----------------|------------|
+| Budget | [services/budget/openapi.yaml](services/budget/openapi.yaml) | `http://localhost:5001` | 14 |
+| Bills | [services/bills/openapi.yaml](services/bills/openapi.yaml) | `http://localhost:5002` | 10 |
+
+The operation counts cover the explicit Flask GET and POST routes. Flask
+also handles HEAD for GET routes and OPTIONS for browser preflight. Both
+services return `status`, `db`, and `version` from `GET /health`. The
+database readiness probe returns 200 when ready and 503 when it fails.
+The Budget dashboard calls `GET /bills/due?days=30`. Budget financial
+questions and insights call `GET /bills`. A failure of either required Bills
+call is reported as a 503 JSON error by Budget.
+
+### Step 22 verification (November 27, 2026)
+
+The complete Python suite passed all **137 tests**, including 24 contract
+tests. The contract suite parses the YAML, validates the OpenAPI documents
+and their JSON examples, checks both Flask route maps, and validates
+Flask test-client responses using SQL cursor and outbound HTTP fixtures.
+Python 3.11 and `requirements-test.txt` provide the test environment for CI.
+
+The standalone OpenAPI validation, all three JavaScript syntax checks, and
+the Compose configuration check also passed.
+
+```bash
+python -m openapi_spec_validator services/budget/openapi.yaml services/bills/openapi.yaml
+node --check ui/app.js
+node --check ui/config.js
+node --check ui/config.compose.js
+docker compose config --quiet
+```
+
+Live Compose smoke tests checked both direct backend ports, both Nginx
+health proxies, the UI homepage, and JSON POST preflights. Live success
+and validation-error responses matched the documented schemas. SQL Server,
+Budget, and Bills were healthy, and `db-init` exited with code 0.
+
+### Findings from the frontend and API review
+
+The frontend's request paths, methods, and JSON field names match the
+service routes. The review found differences in validation and display.
+
+- A simulated purchase can return 200 with `status: uncategorized` and
+  create no transaction. The UI reports “Purchase recorded” for that response.
+- The bill form accepts due days 1–31 for every frequency. The API caps
+  weekly and biweekly at 7 and 14 and allows quarterly and yearly up to 90
+  and 365 respectively.
+- The dashboard's “Bills due in 30 days” total includes overdue active bills.
+- A spending-breakdown date that SQL Server cannot parse returns 503 with
+  `{"error":"Database unavailable"}`. Certain wrong-type values, such as a
+  non-string financial question or array-valued bill frequency, can return
+  a Flask HTML 500 response.

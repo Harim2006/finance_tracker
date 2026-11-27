@@ -189,3 +189,27 @@ financial operations are not retried after a request has begun.
 - **Negative**: Azure setup must run the explicit contained-user initializer
   and service-specific migration URLs, and live Azure SQL verification remains
   pending until the resources exist.
+
+## 9. Independent OpenAPI contracts for Budget and Bills
+
+Decided on November 27, 2026.
+
+**Context** — Each split Flask service has its own public API. The static
+frontend calls both, and Budget also depends on the Bills list and due-date
+routes. The assignment's system schema identifies each service's OpenAPI
+document by a repository-relative path.
+
+**Decision** — Maintain an OpenAPI 3.0.3 document beside each Flask app.
+Use the default local origin in each document and capture the HTTP behavior
+of the Flask routes, including monthly rollover and repeated deactivation,
+payment retry behavior, distinct health and application error bodies, and
+Budget's dependency errors. The contract tests load both service apps, match
+the documented operations to their Flask route maps, and validate responses
+with SQL and outbound HTTP fixtures.
+
+**Verification** — Both documents passed the OpenAPI validator and all 137
+Python tests passed. Live Compose probes validated JSON responses from both
+services and reached both APIs through the UI proxy. The frontend review
+findings are recorded in the README.
+
+[Budget OpenAPI](services/budget/openapi.yaml) · [Bills OpenAPI](services/bills/openapi.yaml) · [Verification and findings](README.md#assignment-2-api-contracts)

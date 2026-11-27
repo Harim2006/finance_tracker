@@ -1,0 +1,574 @@
+openapi: 3.0.3
+info:
+  title: Finance Tracker Budget API
+  version: 1.0.0
+  description: |
+    Envelope balances, transactions, monthly rollover and financial analysis.
+    Send JSON objects with Content-Type: application/json where a body is required.
+    Flask also serves HEAD on GET routes and OPTIONS for preflight. Responses vary
+    by Origin. The origin configured by UI_ORIGIN can use GET, POST and OPTIONS
+    with the Content-Type header. Unmatched routes and unhandled exceptions use
+    Flask's HTML error pages.
+servers:
+  - url: http://localhost:5001
+    description: Default local Budget service
+paths:
+  /health:
+    get:
+      operationId: getBudgetHealth
+      summary: Check Budget database readiness and report the build version
+      description: Checks read and write access to the envelopes table and rolls back the probe.
+      responses:
+        '200': { $ref: '#/components/responses/Healthy' }
+        '503': { $ref: '#/components/responses/Unhealthy' }
+  /envelopes:
+    get:
+      operationId: listEnvelopes
+      summary: List envelopes sorted by name
+      responses:
+        '200':
+          description: Envelope rows
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Envelope' } }
+              example:
+                - id: 1
+                  name: Groceries
+                  monthly_allocation: 300.0
+                  current_balance: 245.5
+                  overspend_rule: stop
+                  rollover_enabled: true
+                  created_at: '2026-11-01T08:30:00.123456'
+                  last_rollover_date: null
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /envelopes/create:
+    post:
+      operationId: createEnvelope
+      summary: Create an envelope funded with its initial monthly allocation
+      description: A duplicate name returns 409. Requests have no idempotency key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, monthly_allocation]
+              properties:
+                name: { $ref: '#/components/schemas/NonblankText' }
+                monthly_allocation:
+                  description: Finite amount greater than or equal to zero.
+                  oneOf:
+                    - { type: number, minimum: 0 }
+                    - { $ref: '#/components/schemas/NumericText' }
+                overspend_rule:
+                  type: string
+                  enum: [stop, borrow]
+                  default: stop
+                  description: Stop blocks overdrafts and borrow permits negative balances.
+            example: { name: Groceries, monthly_allocation: 300, overspend_rule: stop }
+      responses:
+        '201':
+          description: Envelope created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, status]
+                additionalProperties: false
+                properties:
+                  id: { $ref: '#/components/schemas/Id' }
+                  status: { type: string, enum: [created] }
+              example: { id: 1, status: created }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '409':
+          description: Name already exists or a database constraint was violated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: Envelope already exists }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /envelopes/{envelope_id}:
+    parameters:
+      - $ref: '#/components/parameters/EnvelopeId'
+    get:
+      operationId: getEnvelopeStatus
+      summary: Get envelope balances, monthly spending and transaction count
+      responses:
+        '200':
+          description: Envelope status with current-month totals and lifetime transaction count
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvelopeStatus' }
+              example:
+                id: 1
+                name: Groceries
+                current_balance: 245.5
+                monthly_allocation: 300.0
+                spent_this_month: 54.5
+                remaining_this_month: 245.5
+                overspend_rule: stop
+                transaction_count: 1
+                is_overspent: false
+        '404': { $ref: '#/components/responses/EnvelopeNotFound' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /envelopes/{envelope_id}/allocate:
+    parameters:
+      - $ref: '#/components/parameters/EnvelopeId'
+    post:
+      operationId: allocateFunds
+      summary: Add funds to an envelope's current balance
+      description: Each successful request adds the amount again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount: { $ref: '#/components/schemas/PositiveAmount' }
+            example: { amount: 25.0 }
+      responses:
+        '200':
+          description: Funds allocated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                additionalProperties: false
+                properties:
+                  status: { type: string, enum: [allocated] }
+              example: { status: allocated }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '404': { $ref: '#/components/responses/EnvelopeNotFound' }
+        '409': { $ref: '#/components/responses/DatabaseConflict' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /envelopes/{envelope_id}/spend:
+    parameters:
+      - $ref: '#/components/parameters/EnvelopeId'
+    post:
+      operationId: recordSpending
+      summary: Record an expense and deduct it from the envelope
+      description: Repeating a successful request can record another expense.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount: { $ref: '#/components/schemas/PositiveAmount' }
+                description: { type: string, nullable: true, default: '', maxLength: 500 }
+                merchant: { type: string, nullable: true, default: '', maxLength: 255 }
+            example: { amount: 54.50, description: Weekly grocery shop, merchant: Local Market }
+      responses:
+        '201':
+          description: Expense recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [transaction_id]
+                additionalProperties: false
+                properties:
+                  transaction_id: { $ref: '#/components/schemas/Id' }
+              example: { transaction_id: 7 }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '404': { $ref: '#/components/responses/EnvelopeNotFound' }
+        '409': { $ref: '#/components/responses/SpendingConflict' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /envelopes/rollover:
+    post:
+      operationId: rollOverEnvelopes
+      summary: Add this month's allocation to each eligible envelope and save history
+      description: |
+        Each rollover-enabled envelope is processed at most once per calendar month.
+        Repeating the call returns zero when no additional envelopes are eligible.
+        A request body is ignored.
+      responses:
+        '200':
+          description: Number of envelopes rolled over by this request
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rolledover]
+                additionalProperties: false
+                properties:
+                  rolledover: { type: integer, minimum: 0 }
+              example: { rolledover: 2 }
+        '409': { $ref: '#/components/responses/DatabaseConflict' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /transactions:
+    get:
+      operationId: listTransactions
+      summary: List recent transactions in descending timestamp order
+      parameters:
+        - name: days
+          in: query
+          description: Calendar days subtracted from today's UTC date for the inclusive cutoff.
+          schema: { type: integer, minimum: 1, maximum: 3650, default: 30 }
+          example: 14
+      responses:
+        '200':
+          description: Recent transactions with their envelope names
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Transaction' } }
+              example:
+                - id: 7
+                  envelope_id: 1
+                  amount: 54.5
+                  date: '2026-11-24T17:25:30'
+                  description: Weekly grocery shop
+                  merchant: Local Market
+                  category: null
+                  envelope_name: Groceries
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /spending-breakdown:
+    get:
+      operationId: getSpendingBreakdown
+      summary: Sum spending by envelope over an inclusive date range
+      description: |
+        Dates are cast by SQL Server. A value that SQL Server cannot convert
+        returns the database error response. A reversed range returns an empty list.
+      parameters:
+        - name: start_date
+          in: query
+          description: First day, in YYYY-MM-DD. Omitted or empty uses the first day of the current month.
+          schema: { type: string }
+          example: '2026-11-01'
+        - name: end_date
+          in: query
+          description: Last day, in YYYY-MM-DD. Omitted or empty uses today's date.
+          schema: { type: string }
+          example: '2026-11-27'
+      responses:
+        '200':
+          description: Totals ordered from largest to smallest
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [name, total]
+                  additionalProperties: false
+                  properties:
+                    name: { type: string }
+                    total: { type: number }
+              example: [{ name: Groceries, total: 54.50 }]
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /api/bank/transaction:
+    post:
+      operationId: importBankTransaction
+      summary: Categorize and record a simulated bank transaction
+      description: |
+        The absolute value of a nonzero amount is used, so bank debits can be negative.
+        The highest-priority matching merchant rule selects the envelope. There is
+        no transaction deduplication. An uncategorized request creates no transaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchant, amount]
+              properties:
+                merchant: { $ref: '#/components/schemas/NonblankText' }
+                amount:
+                  description: Finite nonzero amount, as a JSON number or numeric string.
+                  oneOf:
+                    - { type: number, not: { enum: [0] } }
+                    - { $ref: '#/components/schemas/NumericText' }
+                description: { type: string, nullable: true, default: '', maxLength: 500 }
+            example: { merchant: Local Market, amount: -54.50, description: Weekly grocery shop }
+      responses:
+        '200': { $ref: '#/components/responses/Uncategorized' }
+        '201': { $ref: '#/components/responses/BankTransactionCreated' }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '404': { $ref: '#/components/responses/EnvelopeNotFound' }
+        '409': { $ref: '#/components/responses/SpendingConflict' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /simulate-purchase:
+    post:
+      operationId: simulatePurchase
+      summary: Categorize and record a simulated purchase
+      description: |
+        The highest-priority matching merchant rule selects the envelope. There is
+        no transaction deduplication. An uncategorized request creates no transaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [merchant, amount]
+              properties:
+                merchant: { $ref: '#/components/schemas/NonblankText' }
+                amount: { $ref: '#/components/schemas/PositiveAmount' }
+                description: { type: string, nullable: true, default: '', maxLength: 500 }
+            example: { merchant: Local Market, amount: 54.50, description: Weekly grocery shop }
+      responses:
+        '200': { $ref: '#/components/responses/Uncategorized' }
+        '201': { $ref: '#/components/responses/BankTransactionCreated' }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '404': { $ref: '#/components/responses/EnvelopeNotFound' }
+        '409': { $ref: '#/components/responses/SpendingConflict' }
+        '503': { $ref: '#/components/responses/DatabaseUnavailable' }
+  /analysis/ask:
+    post:
+      operationId: askFinancialQuestion
+      summary: Answer a financial question with rule-based analysis
+      description: Reads Bills GET /bills and local budget data. The operation does not change financial records.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                question:
+                  type: string
+                  default: ''
+                  description: An omitted or empty question requests a general financial summary.
+            example: { question: 'When are my bills due?' }
+      responses:
+        '200':
+          description: Answer text, which may contain Markdown formatting
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [answer]
+                additionalProperties: false
+                properties:
+                  answer: { type: string }
+              example: { answer: 'No bills are due in the next 30 days.' }
+        '400': { $ref: '#/components/responses/InvalidInput' }
+        '500':
+          description: A non-string question can raise an unhandled exception and return Flask's HTML error page
+          content:
+            text/html:
+              schema: { type: string }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
+  /analysis/insights:
+    get:
+      operationId: getFinancialInsights
+      summary: Generate financial insights from envelopes and bills
+      description: Reads Bills GET /bills and local budget data.
+      responses:
+        '200':
+          description: Zero or more insights
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [insights]
+                additionalProperties: false
+                properties:
+                  insights: { type: array, items: { $ref: '#/components/schemas/Insight' } }
+              example:
+                insights:
+                  - type: success
+                    title: Good Financial Health
+                    message: 1 out of 1 envelopes are healthy. Keep up the good work!
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
+  /api/dashboard/summary:
+    get:
+      operationId: getDashboardSummary
+      summary: Summarize allocations, current-month spending and bills due
+      description: Reads Bills GET /bills/due?days=30, which includes overdue active bills.
+      responses:
+        '200':
+          description: Aggregate monetary totals
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total_allocated, spent_this_month, upcoming_bills_30days]
+                additionalProperties: false
+                properties:
+                  total_allocated: { type: number }
+                  spent_this_month: { type: number }
+                  upcoming_bills_30days: { type: number }
+              example: { total_allocated: 300.0, spent_this_month: 54.5, upcoming_bills_30days: 45.0 }
+        '503': { $ref: '#/components/responses/DependencyUnavailable' }
+
+components:
+  parameters:
+    EnvelopeId:
+      name: envelope_id
+      in: path
+      required: true
+      description: Numeric envelope ID. Flask accepts unsigned decimal digits in the path.
+      schema: { type: integer, minimum: 0 }
+      example: 1
+  schemas:
+    Id: { type: integer, minimum: 1 }
+    NonblankText:
+      type: string
+      minLength: 1
+      pattern: '\S'
+      description: Leading and trailing whitespace is stripped. Stored names and merchants fit NVARCHAR(255).
+    NumericText:
+      type: string
+      pattern: '^\s*[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?\s*$'
+      description: Numeric string converted to a finite number and subject to the same amount constraints.
+    PositiveAmount:
+      description: Finite amount strictly greater than zero.
+      oneOf:
+        - { type: number, minimum: 0, exclusiveMinimum: true }
+        - { $ref: '#/components/schemas/NumericText' }
+    LocalTimestamp:
+      type: string
+      pattern: '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{6})?$'
+      description: ISO 8601 timestamp serialized without a UTC offset, with optional microseconds.
+      example: '2026-11-24T17:25:30.123456'
+    Envelope:
+      type: object
+      required: [id, name, monthly_allocation, current_balance, overspend_rule, rollover_enabled, created_at, last_rollover_date]
+      additionalProperties: false
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string, maxLength: 255 }
+        monthly_allocation: { type: number, minimum: 0 }
+        current_balance: { type: number }
+        overspend_rule: { type: string, enum: [stop, borrow] }
+        rollover_enabled: { type: boolean }
+        created_at: { $ref: '#/components/schemas/LocalTimestamp' }
+        last_rollover_date: { type: string, format: date, nullable: true }
+    EnvelopeStatus:
+      type: object
+      required: [id, name, current_balance, monthly_allocation, spent_this_month, remaining_this_month, overspend_rule, transaction_count, is_overspent]
+      additionalProperties: false
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string, maxLength: 255 }
+        current_balance: { type: number }
+        monthly_allocation: { type: number, minimum: 0 }
+        spent_this_month: { type: number }
+        remaining_this_month: { type: number, description: Monthly allocation minus current-month spending. }
+        overspend_rule: { type: string, enum: [stop, borrow] }
+        transaction_count: { type: integer, minimum: 0 }
+        is_overspent: { type: boolean, description: True when the current balance is negative. }
+    Transaction:
+      type: object
+      required: [id, envelope_id, amount, date, description, merchant, category, envelope_name]
+      additionalProperties: false
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        envelope_id: { $ref: '#/components/schemas/Id' }
+        amount: { type: number, minimum: 0 }
+        date: { $ref: '#/components/schemas/LocalTimestamp' }
+        description: { type: string, nullable: true, maxLength: 500 }
+        merchant: { type: string, nullable: true, maxLength: 255 }
+        category: { type: string, nullable: true, maxLength: 255 }
+        envelope_name: { type: string, nullable: true, maxLength: 255 }
+    Insight:
+      type: object
+      required: [type, title, message]
+      additionalProperties: false
+      properties:
+        type: { type: string, enum: [warning, info, success] }
+        title: { type: string }
+        message: { type: string }
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error: { type: string }
+  responses:
+    Healthy:
+      description: Service and database are ready
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, db, version]
+            additionalProperties: false
+            properties:
+              status: { type: string, enum: [ok] }
+              db: { type: string, enum: [ok] }
+              version: { type: string, description: Value of GIT_SHA with dev as the local default. }
+          example: { status: ok, db: ok, version: dev }
+    Unhealthy:
+      description: The database readiness probe failed
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, db, version]
+            additionalProperties: false
+            properties:
+              status: { type: string, enum: [unavailable] }
+              db: { type: string, enum: [unavailable] }
+              version: { type: string, description: Value of GIT_SHA with dev as the local default. }
+          example: { status: unavailable, db: unavailable, version: dev }
+    InvalidInput:
+      description: Invalid input, missing required field or invalid JSON object for a body-taking operation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: Invalid amount }
+    EnvelopeNotFound:
+      description: The envelope does not exist
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: Envelope not found }
+    DatabaseConflict:
+      description: A database constraint was violated
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: Database constraint violated }
+    SpendingConflict:
+      description: The stop rule blocked the expense or a database constraint was violated
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: Insufficient envelope funds }
+    DatabaseUnavailable:
+      description: The Budget database operation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: Database unavailable }
+    DependencyUnavailable:
+      description: The Budget database operation failed or the required Bills API call failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            budgetDatabase: { value: { error: Database unavailable } }
+            billsService: { value: { error: 'Bills service unavailable; try again later' } }
+    BankTransactionCreated:
+      description: A categorization rule matched and the transaction was recorded
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, transaction_id, envelope_id]
+            additionalProperties: false
+            properties:
+              status: { type: string, enum: [processed] }
+              transaction_id: { $ref: '#/components/schemas/Id' }
+              envelope_id: { $ref: '#/components/schemas/Id' }
+          example: { status: processed, transaction_id: 7, envelope_id: 1 }
+    Uncategorized:
+      description: No merchant rule matched and no transaction was recorded
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, message]
+            additionalProperties: false
+            properties:
+              status: { type: string, enum: [uncategorized] }
+              message: { type: string }
+          example: { status: uncategorized, message: No matching envelope found }

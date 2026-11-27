@@ -1,0 +1,6 @@
+-r requirements.txt
+pymssql==2.4.6
+python-dotenv==1.2.4
+PyYAML==6.0.2
+openapi-schema-validator==0.6.3
+openapi-spec-validator==0.7.2
