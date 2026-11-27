@@ -29,7 +29,7 @@
             <div class="stats-grid">
                 <article class="stat-card purple"><span>Total budget</span><strong id="total-allocated">—</strong></article>
                 <article class="stat-card pink"><span>Spent this month</span><strong id="spent-month">—</strong></article>
-                <article class="stat-card blue"><span>Bills due in 30 days</span><strong id="upcoming-bills">—</strong></article>
+                <article class="stat-card blue"><span>Bills overdue or due within 30 days</span><strong id="upcoming-bills">—</strong></article>
             </div>
             <div class="two-column">
                 <article class="panel"><div class="panel-heading"><h2>Budget envelopes</h2><a href="#envelopes">View all</a></div><div id="dashboard-envelopes" class="table-wrap"></div></article>
@@ -55,8 +55,35 @@
         </section>
     </main>
 
-    <dialog id="envelope-modal"><form id="envelope-form" method="dialog" class="modal-form"><button class="close" type="button" data-close>&times;</button><h2>Add envelope</h2><label>Name<input name="name" required placeholder="Groceries"></label><label>Monthly allocation<input name="monthly_allocation" type="number" min="0" step="0.01" required placeholder="500.00"></label><label>Overspend rule<select name="overspend_rule"><option value="stop">Stop at zero</option><option value="borrow">Allow borrowing</option></select></label><button class="button" type="submit">Create envelope</button></form></dialog>
-    <dialog id="bill-modal"><form id="bill-form" method="dialog" class="modal-form"><button class="close" type="button" data-close>&times;</button><h2>Add recurring bill</h2><label>Name<input name="name" required placeholder="Netflix"></label><label>Amount<input name="amount" type="number" min="0.01" step="0.01" required placeholder="15.99"></label><label>Frequency<select name="frequency"><option>monthly</option><option>quarterly</option><option>yearly</option><option>weekly</option><option>biweekly</option></select></label><label>Due day<input name="due_day" type="number" min="1" max="31" required placeholder="5"></label><label>Category<select name="category"><option>utilities</option><option>entertainment</option><option>transportation</option><option>health</option><option>housing</option><option>insurance</option><option>other</option></select></label><button class="button" type="submit">Add bill</button></form></dialog>
+    <dialog id="envelope-modal">
+        <form id="envelope-form" method="dialog" class="modal-form">
+            <button class="close" type="button" data-close>&times;</button><h2>Add envelope</h2>
+            <label>Name<input name="name" required placeholder="Groceries"></label>
+            <label>Monthly allocation<input name="monthly_allocation" type="number" min="0" step="0.01" required placeholder="500.00"></label>
+            <label>Overspend rule<select name="overspend_rule"><option value="stop">Stop at zero</option><option value="borrow">Allow borrowing</option></select></label>
+            <div class="form-error" role="alert"></div>
+            <button class="button" type="submit">Create envelope</button>
+        </form>
+    </dialog>
+    <dialog id="bill-modal">
+        <form id="bill-form" method="dialog" class="modal-form">
+            <button class="close" type="button" data-close>&times;</button><h2>Add recurring bill</h2>
+            <label>Name<input name="name" required placeholder="Netflix"></label>
+            <label>Amount<input name="amount" type="number" min="0.01" step="0.01" required placeholder="15.99"></label>
+            <label>Frequency<select name="frequency">
+                <option data-max-due-day="31">monthly</option>
+                <option data-max-due-day="90">quarterly</option>
+                <option data-max-due-day="365">yearly</option>
+                <option data-max-due-day="7">weekly</option>
+                <option data-max-due-day="14">biweekly</option>
+            </select></label>
+            <label>Due day<input name="due_day" type="number" min="1" max="31" required placeholder="5" aria-describedby="bill-due-day-range"></label>
+            <span id="bill-due-day-range" class="muted">Enter a value from 1 to 31.</span>
+            <label>Category<select name="category"><option>utilities</option><option>entertainment</option><option>transportation</option><option>health</option><option>housing</option><option>insurance</option><option>other</option></select></label>
+            <div class="form-error" role="alert"></div>
+            <button class="button" type="submit">Add bill</button>
+        </form>
+    </dialog>
     <script src="config.js"></script>
     <script src="app.js"></script>
 </body>

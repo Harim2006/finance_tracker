@@ -51,9 +51,43 @@
     async function refresh() { try { [envelopes, bills] = await Promise.all([api(budgetUrl, '/envelopes'), api(billsUrl, '/bills')]); const summary = await api(budgetUrl, '/api/dashboard/summary'); $('#total-allocated').textContent = money(summary.total_allocated); $('#spent-month').textContent = money(summary.spent_this_month); $('#upcoming-bills').textContent = money(summary.upcoming_bills_30days); renderEnvelopes(); renderBills(); loadInsights(); } catch (error) { notify(error.message, true); } }
     async function loadInsights() { try { const data = await api(budgetUrl, '/analysis/insights'); $('#insights').innerHTML = (data.insights || []).map(i => { const insight = typeof i === 'string' ? { message: i } : i; return `<li><strong>${escapeHtml(insight.title || 'Insight')}:</strong> ${escapeHtml(insight.message || '')}</li>`; }).join(''); } catch (_) { $('#insights').innerHTML = ''; } }
     function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;' }[c])); }
-    async function submitForm(event, path, base, success) { event.preventDefault(); const form = event.target; try { const data = Object.fromEntries(new FormData(form)); if (data.amount) data.amount = Number(data.amount); if (data.monthly_allocation) data.monthly_allocation = Number(data.monthly_allocation); if (data.due_day) data.due_day = Number(data.due_day); await api(base, path, json('POST', data)); form.reset(); form.closest('dialog')?.close(); notify(success); await refresh(); } catch (error) { notify(error.message, true); } }
+    async function submitForm(event, path, base, success) {
+        event.preventDefault();
+        const form = event.target;
+        const errorMessage = form.querySelector('.form-error');
+        if (errorMessage) errorMessage.textContent = '';
+
+        try {
+            const data = Object.fromEntries(new FormData(form));
+            if (data.amount) data.amount = Number(data.amount);
+            if (data.monthly_allocation) data.monthly_allocation = Number(data.monthly_allocation);
+            if (data.due_day) data.due_day = Number(data.due_day);
+            const result = await api(base, path, json('POST', data));
+            if (result.status === 'uncategorized') {
+                notify(result.message, true);
+                return;
+            }
+            form.reset();
+            form.closest('dialog')?.close();
+            notify(success);
+            await refresh();
+        } catch (error) {
+            if (errorMessage) errorMessage.textContent = error.message;
+            else notify(error.message, true);
+        }
+    }
     document.addEventListener('click', async (event) => { const modal = event.target.dataset.modal; if (modal) $(`#${modal}`).showModal(); if (event.target.matches('[data-close]')) event.target.closest('dialog').close(); if (event.target.dataset.action === 'refresh') refresh(); if (event.target.dataset.action === 'rollover') { try { await api(budgetUrl, '/envelopes/rollover', json('POST', {})); notify('Monthly rollover completed'); refresh(); } catch (e) { notify(e.message, true); } } const envelopeAction = event.target.dataset.envelopeAction; if (envelopeAction) { const id = event.target.dataset.id; const amount = prompt(envelopeAction === 'allocate' ? 'Amount to allocate:' : 'Expense amount:'); if (amount === null) return; const data = { amount: Number(amount) }; if (envelopeAction === 'spend') { data.merchant = prompt('Merchant (optional):') || ''; data.description = prompt('Description (optional):') || ''; } try { await api(budgetUrl, `/envelopes/${id}/${envelopeAction}`, json('POST', data)); notify('Envelope updated'); refresh(); } catch (e) { notify(e.message, true); } } const billAction = event.target.dataset.billAction; if (billAction) { const id = event.target.dataset.id; try { if (billAction === 'pay') await api(billsUrl, `/bills/${id}/pay`, json('POST', { amount_paid: Number(event.target.dataset.amount), payment_date: new Date().toISOString().slice(0, 10) })); else if (confirm('Deactivate this bill?')) await api(billsUrl, `/bills/${id}/deactivate`, json('POST', {})); notify(billAction === 'pay' ? 'Payment recorded' : 'Bill deactivated'); refresh(); } catch (e) { notify(e.message, true); } } });
-    $('#envelope-form').addEventListener('submit', e => submitForm(e, '/envelopes/create', budgetUrl, 'Envelope created')); $('#bill-form').addEventListener('submit', e => submitForm(e, '/bills/create', billsUrl, 'Bill created'));
+    $('#envelope-form').addEventListener('submit', e => submitForm(e, '/envelopes/create', budgetUrl, 'Envelope created'));
+    const billForm = $('#bill-form');
+    function updateBillDueDayLimit() {
+        const limit = billForm.elements.frequency.selectedOptions[0].dataset.maxDueDay;
+        billForm.elements.due_day.max = limit;
+        $('#bill-due-day-range').textContent = `Enter a value from 1 to ${limit}.`;
+    }
+    billForm.elements.frequency.addEventListener('change', updateBillDueDayLimit);
+    billForm.addEventListener('reset', () => queueMicrotask(updateBillDueDayLimit));
+    billForm.addEventListener('submit', e => submitForm(e, '/bills/create', billsUrl, 'Bill created'));
+    updateBillDueDayLimit();
     $('#purchase-form').addEventListener('submit', e => submitForm(e, '/simulate-purchase', budgetUrl, 'Purchase recorded')); $('#question-form').addEventListener('submit', async e => { e.preventDefault(); try { const data = await api(budgetUrl, '/analysis/ask', json('POST', { question: new FormData(e.target).get('question') })); $('#answer').textContent = data.answer; e.target.reset(); } catch (error) { notify(error.message, true); } });
     window.addEventListener('hashchange', () => { showPage(); refresh(); }); showPage(); refresh();
 }());

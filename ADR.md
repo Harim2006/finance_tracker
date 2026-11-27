@@ -213,3 +213,26 @@ services and reached both APIs through the UI proxy. The frontend review
 findings are recorded in the README.
 
 [Budget OpenAPI](services/budget/openapi.yaml) · [Bills OpenAPI](services/bills/openapi.yaml) · [Verification and findings](README.md#assignment-2-api-contracts)
+
+### Step 22.1 validation and error handling
+
+Decided on November 27, 2026.
+
+Handle a dedicated input-validation exception as JSON 400 in each service.
+Validate dates and client values before database access or cross-service
+calls. Date parsing accepts the documented ISO forms and keeps the existing
+empty-value defaults. Invalid amounts and text are checked against the SQL
+column range or length where applicable. SQL connection and Bills dependency
+errors continue to return 503. Unexpected exceptions reach Flask's server
+error handler.
+
+The static UI reflects the existing domain rules. The due-day maximum
+depends on the bill frequency, and the purchase notice follows the Budget
+response status. The dashboard still counts overdue active bills as due and
+labels them explicitly. Form validation messages appear inside the relevant
+dialog.
+
+Regression tests verify the 400 schema, compatibility defaults, and failure
+handling at the Flask boundary. Both OpenAPI documents validated and all
+149 tests passed. Live HTTP probes and a Chrome smoke test exercised the
+rebuilt Compose stack.

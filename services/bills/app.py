@@ -6,7 +6,7 @@ from flask import Flask, request, jsonify, g
 from flask.json.provider import DefaultJSONProvider
 import pymssql
 from database import get_db, close_db
-from validation import NotFoundError, ConflictError, validate_integer
+from validation import ConflictError, InputError, NotFoundError, validate_integer, validate_optional_date
 
 class ISOJSONProvider(DefaultJSONProvider):
     @staticmethod
@@ -43,7 +43,7 @@ def not_found(error):
 def conflict(error):
     return jsonify(error=str(error)), 409
 
-@app.errorhandler(ValueError)
+@app.errorhandler(InputError)
 def invalid(error):
     return jsonify(error=str(error)), 400
 
@@ -57,14 +57,17 @@ def database_error(error):
     return jsonify(error='Database unavailable'), 503
 
 def data():
-    value = request.get_json(silent=True)
+    try:
+        value = request.get_json(silent=True)
+    except RecursionError as error:
+        raise InputError('JSON nesting is too deep') from error
     if not isinstance(value, dict):
-        raise ValueError('Expected a JSON object')
+        raise InputError('Expected a JSON object')
     return value
 
 def required(value, key):
     if key not in value:
-        raise ValueError(f'Missing required field: {key}')
+        raise InputError(f'Missing required field: {key}')
     return value[key]
 
 @app.get('/health')
@@ -99,8 +102,9 @@ def create_bill():
 @app.post('/bills/<int:bill_id>/pay')
 def pay(bill_id):
     d = data()
+    payment_date = validate_optional_date(d.get('payment_date'), 'payment_date')
     amount = d.get('amount_paid')
-    manager.mark_as_paid(bill_id, d.get('payment_date') or None, None if amount == '' else amount)
+    manager.mark_as_paid(bill_id, payment_date, None if amount == '' else amount)
     return jsonify(status='paid')
 
 @app.post('/bills/<int:bill_id>/deactivate')

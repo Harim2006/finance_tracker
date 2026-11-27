@@ -133,7 +133,7 @@ class ServiceContract:
         self.cursor.fetchall.return_value = []
         self.cursor.fetchone.return_value = None
         self.cursor.rowcount = 1
-        self.enterContext(patch.object(self.domain, "get_db", return_value=self.connection))
+        self.domain_db = self.enterContext(patch.object(self.domain, "get_db", return_value=self.connection))
         self.health_db = self.enterContext(patch.object(self.module, "get_db", return_value=self.connection))
         self.enterContext(patch.object(self.module.app.logger, "disabled", True))
 
@@ -151,6 +151,29 @@ class ServiceContract:
         self.validator.evolve(schema=schema).validate(body)
         return body
 
+    def assert_bad_input(self, method, path, message, **request):
+        self.assertEqual(self.assert_contract(method, path, 400, **request), {"error": message})
+        self.domain_db.assert_not_called()
+
+    def test_malformed_and_non_object_json(self):
+        for raw in ("", "{broken", "null", "[]", '"text"', "42", "false"):
+            with self.subTest(raw=raw):
+                self.assert_bad_input(
+                    "post", self.create_path, "Expected a JSON object", data=raw, content_type="application/json",
+                )
+        depth = sys.getrecursionlimit() + 1
+        nested = '{"value":' * depth + '0' + '}' * depth
+        self.assert_bad_input(
+            "post", self.create_path, "JSON nesting is too deep", data=nested, content_type="application/json",
+        )
+
+    def test_unexpected_value_error_remains_a_server_error(self):
+        self.domain_db.side_effect = ValueError("Internal database configuration error")
+        response = self.client.get(self.list_path)
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.mimetype, "text/html")
+        self.assertNotIn("Internal database configuration error", response.get_data(as_text=True))
+
     def test_health_contract(self):
         with patch.dict("os.environ", {"GIT_SHA": "contract-test-sha"}):
             healthy = self.assert_contract("get", "/health", 200)
@@ -163,6 +186,8 @@ class ServiceContract:
 
 class BudgetContractTests(ServiceContract, unittest.TestCase):
     service = "budget"
+    create_path = "/envelopes/create"
+    list_path = "/envelopes"
 
     def test_envelope_list_and_detail(self):
         envelope = {
@@ -206,7 +231,7 @@ class BudgetContractTests(ServiceContract, unittest.TestCase):
         self.assert_contract("get", "/spending-breakdown", 200, query_string={"start_date": "2026-11-01"})
 
     def test_purchase_and_bank_import_outcomes(self):
-        for path, amount in (("/api/bank/transaction", -54.5), ("/simulate-purchase", 54.5)):
+        for path, amount in (("/api/bank/transaction", "-54.50"), ("/simulate-purchase", 54.5)):
             with self.subTest(path=path):
                 request = {"merchant": "Local Market", "amount": amount}
                 self.cursor.fetchall.return_value = []
@@ -252,18 +277,96 @@ class BudgetContractTests(ServiceContract, unittest.TestCase):
                         result = self.assert_contract(method, path, 503, **request)
                         self.assertEqual(result, {"error": "Bills service unavailable; try again later"})
 
-    def test_bad_sql_date_uses_database_error_response(self):
-        self.cursor.execute.side_effect = pymssql.OperationalError("Conversion failed for a date value")
-        result = self.assert_contract("get", "/spending-breakdown", 503, query_string={"start_date": "invalid-date"})
+    def test_spending_breakdown_rejects_invalid_dates_before_connecting(self):
+        for field in ("start_date", "end_date"):
+            for value in ("invalid-date", "2026-02-29", "2026-13-01", "2026-11-01T12:00:00"):
+                with self.subTest(field=field, value=value):
+                    self.assert_bad_input(
+                        "get", "/spending-breakdown", f"{field} must be a valid ISO 8601 date",
+                        query_string={field: value},
+                    )
+
+    def test_spending_breakdown_passes_parsed_dates_and_keeps_empty_defaults(self):
+        leap_day = date(2028, 2, 29)
+        self.assert_contract("get", "/spending-breakdown", 200, query_string={
+            "start_date": "20280229", "end_date": "2028-W09-2",
+        })
+        self.assertEqual(self.cursor.execute.call_args.args[1], (leap_day, leap_day))
+
+        self.assert_contract("get", "/spending-breakdown", 200, query_string={"start_date": "", "end_date": ""})
+        today = date.today()
+        self.assertEqual(self.cursor.execute.call_args.args[1], (today.replace(day=1).isoformat(), today.isoformat()))
+
+    def test_spending_breakdown_preserves_database_error_response(self):
+        self.cursor.execute.side_effect = pymssql.OperationalError("Database offline")
+        result = self.assert_contract("get", "/spending-breakdown", 503, query_string={"start_date": "2026-11-01"})
         self.assertEqual(result, {"error": "Database unavailable"})
 
-    def test_non_string_question_returns_html_error(self):
-        with patch.object(self.module, "fetch_bills", return_value=[]):
-            self.assert_contract("post", "/analysis/ask", 500, json={"question": None})
+    def test_non_string_question_is_rejected_before_loading_context(self):
+        with patch.object(self.module, "fetch_bills") as fetch:
+            for value in (None, [], {}, 0, False, 42, True):
+                with self.subTest(value=value):
+                    self.assert_bad_input("post", "/analysis/ask", "question must be a string", json={"question": value})
+            fetch.assert_not_called()
+
+    def test_invalid_envelope_fields(self):
+        valid = {"name": "Groceries", "monthly_allocation": 50}
+        for field, value, message in (
+            ("name", None, "Name is required"), ("name", [], "Name is required"),
+            ("name", "   ", "Name is required"),
+            ("name", "\U0001F4B3" * 128, "name exceeds the maximum length of 255 UTF-16 code units"),
+            ("overspend_rule", {}, "Invalid overspend rule"),
+            ("overspend_rule", None, "Invalid overspend rule"),
+            ("monthly_allocation", False, "Amount must be numeric"),
+            ("monthly_allocation", 10**400, "Amount exceeds the supported range"),
+        ):
+            with self.subTest(field=field, message=message):
+                self.assert_bad_input("post", self.create_path, message, json={**valid, field: value})
+        for field in valid:
+            with self.subTest(missing=field):
+                payload = {key: value for key, value in valid.items() if key != field}
+                self.assert_bad_input("post", self.create_path, f"Missing required field: {field}", json=payload)
+
+    def test_invalid_transaction_fields(self):
+        spend_path = "/envelopes/{envelope_id}/spend"
+        for value in ([], {}, 42, True):
+            for field in ("merchant", "description"):
+                with self.subTest(field=field, value=value):
+                    self.assert_bad_input(
+                        "post", spend_path, f"{field} must be a string or null", json={"amount": 5, field: value},
+                    )
+        for path in ("/simulate-purchase", "/api/bank/transaction"):
+            with self.subTest(path=path):
+                self.assert_bad_input("post", path, "description must be a string or null", json={
+                    "amount": 5, "merchant": "Market", "description": {},
+                })
+                self.assert_bad_input("post", path, "Merchant is required", json={"amount": 5, "merchant": True})
+                self.assert_bad_input("post", path, "Missing required field: merchant", json={"amount": 5})
+        self.assert_bad_input("post", spend_path, "description exceeds the maximum length of 500 UTF-16 code units", json={
+            "amount": 5, "description": "x" * 501,
+        })
+        self.assert_bad_input("post", spend_path, "merchant must contain valid Unicode", json={"amount": 5, "merchant": "\ud800"})
+
+    def test_invalid_amounts_on_all_budget_amount_routes(self):
+        for path, fields in (
+            ("/envelopes/{envelope_id}/allocate", {}), ("/envelopes/{envelope_id}/spend", {}),
+            ("/simulate-purchase", {"merchant": "Market"}), ("/api/bank/transaction", {"merchant": "Market"}),
+        ):
+            for value, message in (
+                (None, "Amount must be numeric"), ([], "Amount must be numeric"), ({}, "Amount must be numeric"),
+                (False, "Amount must be numeric"), ("n/a", "Amount must be numeric"),
+                ("1e999", "Amount must be finite"), (1e16, "Amount exceeds the supported range"),
+                (10**400, "Amount exceeds the supported range"),
+            ):
+                with self.subTest(path=path, amount_type=type(value).__name__, message=message):
+                    self.assert_bad_input("post", path, message, json={**fields, "amount": value})
+            self.assert_bad_input("post", path, "Missing required field: amount", json=fields)
 
 
 class BillsContractTests(ServiceContract, unittest.TestCase):
     service = "bills"
+    create_path = "/bills/create"
+    list_path = "/bills"
 
     def setUp(self):
         super().setUp()
@@ -336,8 +439,64 @@ class BillsContractTests(ServiceContract, unittest.TestCase):
             "name": "Internet", "amount": 45, "frequency": "monthly", "due_day": 15,
         })
 
-    def test_unsupported_non_scalar_fields_can_return_html_error(self):
-        self.assert_contract("post", "/bills/create", 500, json={
-            "name": "Internet", "amount": 45, "frequency": [], "due_day": 15,
+    def test_invalid_bill_creation_fields(self):
+        valid = {"name": "Internet", "amount": 45, "frequency": "monthly", "due_day": 15}
+        invalid = {
+            "name": ((None, [], {}, 12, True, " "), "Name is required"),
+            "amount": ((None, [], {}, False, "bad"), "Amount must be numeric"),
+            "frequency": ((None, [], {}, 12, False, "annual"), "Unsupported bill frequency"),
+            "due_day": ((None, [], {}, 1.5, True, "bad"), "Expected an integer"),
+            "category": (([], {}, 12, False), "category must be a string or null"),
+        }
+        for field, (values, message) in invalid.items():
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    self.assert_bad_input("post", self.create_path, message, json={**valid, field: value})
+        for field in valid:
+            with self.subTest(missing=field):
+                payload = {key: value for key, value in valid.items() if key != field}
+                self.assert_bad_input("post", self.create_path, f"Missing required field: {field}", json=payload)
+        self.assert_bad_input("post", self.create_path, "category exceeds the maximum length of 255 UTF-16 code units", json={
+            **valid, "category": "x" * 256,
         })
-        self.assert_contract("post", "/bills/{bill_id}/pay", 500, json={"payment_date": [2026, 11, 15]})
+        self.assert_bad_input("post", self.create_path, "Amount exceeds the supported range", json={**valid, "amount": 10**400})
+
+    def test_due_day_limits_remain_frequency_specific(self):
+        for frequency, maximum in (("weekly", 7), ("biweekly", 14), ("monthly", 31), ("quarterly", 90), ("yearly", 365)):
+            with self.subTest(frequency=frequency):
+                payload = {"name": "Internet", "amount": 45, "frequency": frequency}
+                self.domain_db.reset_mock()
+                self.assert_bad_input("post", self.create_path, f"Value must be between 1 and {maximum}", json={
+                    **payload, "due_day": maximum + 1,
+                })
+                self.cursor.fetchone.return_value = {"id": 1}
+                self.assert_contract("post", self.create_path, 201, json={**payload, "due_day": maximum})
+
+    def test_invalid_payment_date_and_amount_are_rejected_before_connecting(self):
+        path = "/bills/{bill_id}/pay"
+        for value in ([], {}, 0, False, [2026, 11, 15], 20261115, True):
+            with self.subTest(payment_date=value):
+                self.assert_bad_input("post", path, "payment_date must be an ISO 8601 date string", json={"payment_date": value})
+        for value in ("not a date", "2026-02-30", "2026-11-15T00:00:00"):
+            with self.subTest(payment_date=value):
+                self.assert_bad_input("post", path, "payment_date must be a valid ISO 8601 date", json={"payment_date": value})
+        for value, message in (
+            ([], "Amount must be numeric"), ({}, "Amount must be numeric"), (False, "Amount must be numeric"),
+            ("bad", "Amount must be numeric"), (0, "Invalid amount"), ("NaN", "Amount must be finite"),
+            (10**400, "Amount exceeds the supported range"), (1e16, "Amount exceeds the supported range"),
+        ):
+            with self.subTest(amount_type=type(value).__name__, message=message):
+                self.assert_bad_input("post", path, message, json={"amount_paid": value})
+
+    def test_payment_accepts_iso_variants_and_preserves_optional_defaults(self):
+        for payload, expected_date, expected_amount in (
+            ({}, date.today(), 45.0), ({"payment_date": None, "amount_paid": None}, date.today(), 45.0),
+            ({"payment_date": "", "amount_paid": ""}, date.today(), 45.0),
+            ({"payment_date": "20280229", "amount_paid": "11.50"}, date(2028, 2, 29), 11.5),
+            ({"payment_date": "2028-W09-2", "amount_paid": 11.5}, date(2028, 2, 29), 11.5),
+        ):
+            with self.subTest(payload=payload):
+                self.cursor.execute.reset_mock()
+                self.cursor.fetchone.side_effect = [self.bill, {"id": 5, "due_date": self.bill["next_due_date"]}]
+                self.assert_contract("post", "/bills/{bill_id}/pay", 200, json=payload)
+                self.assertEqual(self.cursor.execute.call_args_list[2].args[1], (expected_date.isoformat(), expected_amount, 5))

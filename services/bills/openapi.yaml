@@ -5,6 +5,7 @@ info:
   description: |
     Recurring bills, payment records, due dates and projections.
     Send JSON objects with Content-Type: application/json where a body is required.
+    Malformed JSON, including bodies too deeply nested to parse, returns a JSON 400 error.
     Flask also serves HEAD on GET routes and OPTIONS for preflight. Responses vary
     by Origin. The origin configured by UI_ORIGIN can use GET, POST and OPTIONS
     with the Content-Type header. Unmatched routes and unhandled exceptions use
@@ -45,7 +46,7 @@ paths:
                   type: string
                   minLength: 1
                   pattern: '\S'
-                  description: Surrounding whitespace is stripped. The stored name fits NVARCHAR(255).
+                  description: Surrounding whitespace is stripped before enforcing the 255 UTF-16 code unit limit.
                 amount: { $ref: '#/components/schemas/PositiveAmount' }
                 frequency: { $ref: '#/components/schemas/Frequency' }
                 due_day:
@@ -64,7 +65,7 @@ paths:
                   nullable: true
                   maxLength: 255
                   default: other
-                  description: Free-form category text.
+                  description: Free-form category text of at most 255 UTF-16 code units.
             example: { name: Internet, amount: 45.0, frequency: monthly, due_day: 15, category: utilities }
       responses:
         '201':
@@ -79,9 +80,13 @@ paths:
                   id: { $ref: '#/components/schemas/Id' }
                   status: { type: string, enum: [created] }
               example: { id: 3, status: created }
-        '400': { $ref: '#/components/responses/InvalidInput' }
+        '400':
+          description: Invalid JSON object, missing required field, or invalid bill values
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: Unsupported bill frequency }
         '409': { $ref: '#/components/responses/DatabaseConflict' }
-        '500': { $ref: '#/components/responses/UnexpectedError' }
         '503': { $ref: '#/components/responses/DatabaseUnavailable' }
   /bills/{bill_id}/pay:
     parameters:
@@ -127,7 +132,12 @@ paths:
                 properties:
                   status: { type: string, enum: [paid] }
               example: { status: paid }
-        '400': { $ref: '#/components/responses/InvalidInput' }
+        '400':
+          description: Invalid JSON object, payment date or payment amount
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: payment_date must be a valid ISO 8601 date }
         '404': { $ref: '#/components/responses/BillNotFound' }
         '409':
           description: The bill is inactive, no unpaid occurrence exists, or a database constraint was violated
@@ -137,7 +147,6 @@ paths:
               examples:
                 inactive: { value: { error: Bill is inactive } }
                 noUnpaidOccurrence: { value: { error: No unpaid occurrence found } }
-        '500': { $ref: '#/components/responses/UnexpectedError' }
         '503': { $ref: '#/components/responses/DatabaseUnavailable' }
   /bills/{bill_id}/deactivate:
     parameters:
@@ -289,9 +298,9 @@ components:
     Id: { type: integer, minimum: 1 }
     Frequency: { type: string, enum: [weekly, biweekly, monthly, quarterly, yearly] }
     PositiveAmount:
-      description: Finite amount strictly greater than zero, whether sent as a number or a numeric string.
+      description: Finite amount strictly greater than zero and below 10^16 after conversion.
       oneOf:
-        - { type: number, minimum: 0, exclusiveMinimum: true }
+        - { type: number, minimum: 0, maximum: 10000000000000000, exclusiveMinimum: true, exclusiveMaximum: true }
         - type: string
           pattern: '^\s*[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?\s*$'
     LocalTimestamp:
@@ -427,11 +436,6 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
           example: { error: Database constraint violated }
-    UnexpectedError:
-      description: Flask HTML error page when an input of an unsupported JSON type raises an unhandled exception
-      content:
-        text/html:
-          schema: { type: string }
     DatabaseUnavailable:
       description: The Bills database operation failed
       content:

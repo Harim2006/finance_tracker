@@ -5,6 +5,7 @@ info:
   description: |
     Envelope balances, transactions, monthly rollover and financial analysis.
     Send JSON objects with Content-Type: application/json where a body is required.
+    Malformed JSON, including bodies too deeply nested to parse, returns a JSON 400 error.
     Flask also serves HEAD on GET routes and OPTIONS for preflight. Responses vary
     by Origin. The origin configured by UI_ORIGIN can use GET, POST and OPTIONS
     with the Content-Type header. Unmatched routes and unhandled exceptions use
@@ -56,9 +57,9 @@ paths:
               properties:
                 name: { $ref: '#/components/schemas/NonblankText' }
                 monthly_allocation:
-                  description: Finite amount greater than or equal to zero.
+                  description: Finite amount greater than or equal to zero and below 10^16 after conversion.
                   oneOf:
-                    - { type: number, minimum: 0 }
+                    - { type: number, minimum: 0, maximum: 10000000000000000, exclusiveMaximum: true }
                     - { $ref: '#/components/schemas/NumericText' }
                 overspend_rule:
                   type: string
@@ -160,8 +161,13 @@ paths:
               required: [amount]
               properties:
                 amount: { $ref: '#/components/schemas/PositiveAmount' }
-                description: { type: string, nullable: true, default: '', maxLength: 500 }
-                merchant: { type: string, nullable: true, default: '', maxLength: 255 }
+                description: { $ref: '#/components/schemas/TransactionDescription' }
+                merchant:
+                  type: string
+                  nullable: true
+                  default: ''
+                  maxLength: 255
+                  description: At most 255 UTF-16 code units.
             example: { amount: 54.50, description: Weekly grocery shop, merchant: Local Market }
       responses:
         '201':
@@ -233,18 +239,17 @@ paths:
       operationId: getSpendingBreakdown
       summary: Sum spending by envelope over an inclusive date range
       description: |
-        Dates are cast by SQL Server. A value that SQL Server cannot convert
-        returns the database error response. A reversed range returns an empty list.
+        Dates are validated before querying the database. A reversed range returns an empty list.
       parameters:
         - name: start_date
           in: query
-          description: First day, in YYYY-MM-DD. Omitted or empty uses the first day of the current month.
-          schema: { type: string }
+          description: First day. Omitted or empty uses the first day of the current month.
+          schema: { $ref: '#/components/schemas/DateFilter' }
           example: '2026-11-01'
         - name: end_date
           in: query
-          description: Last day, in YYYY-MM-DD. Omitted or empty uses today's date.
-          schema: { type: string }
+          description: Last day. Omitted or empty uses today's date.
+          schema: { $ref: '#/components/schemas/DateFilter' }
           example: '2026-11-27'
       responses:
         '200':
@@ -261,6 +266,12 @@ paths:
                     name: { type: string }
                     total: { type: number }
               example: [{ name: Groceries, total: 54.50 }]
+        '400':
+          description: A non-empty date filter is not a valid ISO 8601 date
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: start_date must be a valid ISO 8601 date }
         '503': { $ref: '#/components/responses/DatabaseUnavailable' }
   /api/bank/transaction:
     post:
@@ -280,11 +291,16 @@ paths:
               properties:
                 merchant: { $ref: '#/components/schemas/NonblankText' }
                 amount:
-                  description: Finite nonzero amount, as a JSON number or numeric string.
+                  description: Finite nonzero amount with absolute value below 10^16 after conversion.
                   oneOf:
-                    - { type: number, not: { enum: [0] } }
+                    - type: number
+                      minimum: -10000000000000000
+                      maximum: 10000000000000000
+                      exclusiveMinimum: true
+                      exclusiveMaximum: true
+                      not: { enum: [0] }
                     - { $ref: '#/components/schemas/NumericText' }
-                description: { type: string, nullable: true, default: '', maxLength: 500 }
+                description: { $ref: '#/components/schemas/TransactionDescription' }
             example: { merchant: Local Market, amount: -54.50, description: Weekly grocery shop }
       responses:
         '200': { $ref: '#/components/responses/Uncategorized' }
@@ -310,7 +326,7 @@ paths:
               properties:
                 merchant: { $ref: '#/components/schemas/NonblankText' }
                 amount: { $ref: '#/components/schemas/PositiveAmount' }
-                description: { type: string, nullable: true, default: '', maxLength: 500 }
+                description: { $ref: '#/components/schemas/TransactionDescription' }
             example: { merchant: Local Market, amount: 54.50, description: Weekly grocery shop }
       responses:
         '200': { $ref: '#/components/responses/Uncategorized' }
@@ -348,12 +364,12 @@ paths:
                 properties:
                   answer: { type: string }
               example: { answer: 'No bills are due in the next 30 days.' }
-        '400': { $ref: '#/components/responses/InvalidInput' }
-        '500':
-          description: A non-string question can raise an unhandled exception and return Flask's HTML error page
+        '400':
+          description: Invalid JSON object or non-string question
           content:
-            text/html:
-              schema: { type: string }
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: question must be a string }
         '503': { $ref: '#/components/responses/DependencyUnavailable' }
   /analysis/insights:
     get:
@@ -413,15 +429,25 @@ components:
       type: string
       minLength: 1
       pattern: '\S'
-      description: Leading and trailing whitespace is stripped. Stored names and merchants fit NVARCHAR(255).
+      description: Leading and trailing whitespace is stripped before enforcing the 255 UTF-16 code unit limit.
+    TransactionDescription:
+      type: string
+      nullable: true
+      default: ''
+      maxLength: 500
+      description: At most 500 UTF-16 code units.
+    DateFilter:
+      type: string
+      pattern: '^(?:\d{4}(?:-\d{2}-\d{2}|\d{4}|-W\d{2}(?:-\d)?|W\d{2}\d?)|)$'
+      description: A calendar or week date in ISO 8601 form, or an empty string to use the default. Prefer YYYY-MM-DD.
     NumericText:
       type: string
       pattern: '^\s*[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?\s*$'
       description: Numeric string converted to a finite number and subject to the same amount constraints.
     PositiveAmount:
-      description: Finite amount strictly greater than zero.
+      description: Finite amount strictly greater than zero and below 10^16 after conversion.
       oneOf:
-        - { type: number, minimum: 0, exclusiveMinimum: true }
+        - { type: number, minimum: 0, maximum: 10000000000000000, exclusiveMinimum: true, exclusiveMaximum: true }
         - { $ref: '#/components/schemas/NumericText' }
     LocalTimestamp:
       type: string

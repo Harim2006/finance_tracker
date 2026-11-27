@@ -6,7 +6,10 @@ from flask import Flask, request, jsonify, g
 from flask.json.provider import DefaultJSONProvider
 import pymssql
 from database import get_db, close_db
-from validation import NotFoundError, ConflictError, validate_integer
+from validation import (
+    ConflictError, InputError, NotFoundError, parse_amount, validate_integer,
+    validate_optional_date, validate_text,
+)
 
 class ISOJSONProvider(DefaultJSONProvider):
     @staticmethod
@@ -43,7 +46,7 @@ def not_found(error):
 def conflict(error):
     return jsonify(error=str(error)), 409
 
-@app.errorhandler(ValueError)
+@app.errorhandler(InputError)
 def invalid(error):
     return jsonify(error=str(error)), 400
 
@@ -57,14 +60,17 @@ def database_error(error):
     return jsonify(error='Database unavailable'), 503
 
 def data():
-    value = request.get_json(silent=True)
+    try:
+        value = request.get_json(silent=True)
+    except RecursionError as error:
+        raise InputError('JSON nesting is too deep') from error
     if not isinstance(value, dict):
-        raise ValueError('Expected a JSON object')
+        raise InputError('Expected a JSON object')
     return value
 
 def required(value, key):
     if key not in value:
-        raise ValueError(f'Missing required field: {key}')
+        raise InputError(f'Missing required field: {key}')
     return value[key]
 
 @app.get('/health')
@@ -87,7 +93,6 @@ def health():
 from budget_domain import BudgetEnvelopeManager
 from llm_analyzer import FinanceLLMAnalyzer
 import requests
-import math
 
 manager = BudgetEnvelopeManager()
 analyzer = FinanceLLMAnalyzer()
@@ -116,7 +121,10 @@ def allocate(envelope_id):
 @app.post('/envelopes/<int:envelope_id>/spend')
 def spend(envelope_id):
     d = data()
-    result = manager.record_transaction(envelope_id, required(d,'amount'), d.get('description',''), d.get('merchant',''))
+    amount = required(d, 'amount')
+    description = validate_text(d.get('description', ''), 'description', nullable=True, max_units=500)
+    merchant = validate_text(d.get('merchant', ''), 'merchant', nullable=True, max_units=255)
+    result = manager.record_transaction(envelope_id, amount, description, merchant)
     if result is None:
         raise ConflictError('Insufficient envelope funds')
     return jsonify(transaction_id=result), 201
@@ -131,24 +139,19 @@ def transactions():
 
 @app.get('/spending-breakdown')
 def spending_breakdown():
-    return jsonify(manager.get_spending_breakdown(request.args.get('start_date'), request.args.get('end_date')))
+    start_date = validate_optional_date(request.args.get('start_date'), 'start_date')
+    end_date = validate_optional_date(request.args.get('end_date'), 'end_date')
+    return jsonify(manager.get_spending_breakdown(start_date, end_date))
 
 @app.post('/api/bank/transaction')
 @app.post('/simulate-purchase')
 def bank_transaction():
     d = data()
-    amount = required(d,'amount')
-    if isinstance(amount, bool):
-        raise ValueError('Amount must be numeric')
-    try:
-        amount = float(amount)
-    except (TypeError, ValueError, OverflowError):
-        raise ValueError('Amount must be numeric')
-    if not math.isfinite(amount):
-        raise ValueError('Amount must be finite')
+    amount = required(d, 'amount')
     if request.path == '/api/bank/transaction':
-        amount = abs(amount)
-    result = manager.process_bank_transaction(required(d,'merchant'), amount, d.get('description',''))
+        amount = abs(parse_amount(amount))
+    description = validate_text(d.get('description', ''), 'description', nullable=True, max_units=500)
+    result = manager.process_bank_transaction(required(d, 'merchant'), amount, description)
     return jsonify(result), 201 if result['status']=='processed' else 200
 
 class BillsUnavailable(Exception):
@@ -175,7 +178,8 @@ def financial_context():
 
 @app.post('/analysis/ask')
 def ask():
-    return jsonify(answer=analyzer.analyze_and_answer(data().get('question',''), financial_context()))
+    question = validate_text(data().get('question', ''), 'question')
+    return jsonify(answer=analyzer.analyze_and_answer(question, financial_context()))
 
 @app.get('/analysis/insights')
 def insights():

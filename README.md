@@ -460,18 +460,43 @@ health proxies, the UI homepage, and JSON POST preflights. Live success
 and validation-error responses matched the documented schemas. SQL Server,
 Budget, and Bills were healthy, and `db-init` exited with code 0.
 
-### Findings from the frontend and API review
+### Step 22.1 validation hardening (November 27, 2026)
 
-The frontend's request paths, methods, and JSON field names match the
-service routes. The review found differences in validation and display.
+Both APIs return HTTP 400 with `{"error":"..."}` for invalid inputs.
+Budget validates `start_date` and `end_date` before querying SQL Server.
+Bills validates `payment_date` before looking up the bill. Use `YYYY-MM-DD`
+for dates. Both services also accept compact ISO dates and ISO week dates.
+An omitted or empty spending filter uses its existing default. An omitted,
+null, or empty payment date uses today's date. An omitted, null, or empty
+payment amount uses the bill amount. Database and Bills dependency failures
+continue to use HTTP 503. Unexpected server exceptions use Flask's normal
+error handling.
 
-- A simulated purchase can return 200 with `status: uncategorized` and
-  create no transaction. The UI reports “Purchase recorded” for that response.
-- The bill form accepts due days 1–31 for every frequency. The API caps
-  weekly and biweekly at 7 and 14 and allows quarterly and yearly up to 90
-  and 365 respectively.
-- The dashboard's “Bills due in 30 days” total includes overdue active bills.
-- A spending-breakdown date that SQL Server cannot parse returns 503 with
-  `{"error":"Database unavailable"}`. Certain wrong-type values, such as a
-  non-string financial question or array-valued bill frequency, can return
-  a Flask HTML 500 response.
+Assignment 2 §3 requires both domains to work end to end in the static UI.
+The following decisions follow the existing domain rules.
+
+- The bill form uses the API's maximum due day for each frequency. Weekly
+  allows 7, biweekly 14, monthly 31, quarterly 90, and yearly 365.
+- The 30-day dashboard total includes overdue active bills. The original
+  bill query used an inclusive upper cutoff, and overdue amounts are still
+  due. The dashboard label now says “Bills overdue or due within 30 days”.
+- A simulated purchase with no matching category rule returns 200 with
+  `status: uncategorized` and creates no transaction. The UI shows the API
+  message and keeps the entered values. It reports “Purchase recorded”
+  when the service records the transaction.
+
+All **149 Python tests** passed, including **36 contract tests**. Both
+OpenAPI documents validated with 14 Budget and 10 Bills operations. All
+three JavaScript syntax checks, `docker compose config --quiet`, and
+`git diff --check` passed. Budget, Bills, and the UI rebuilt successfully
+with the existing Compose database running.
+
+```bash
+docker compose up -d --no-deps --build --wait --wait-timeout 90 budget bills ui
+```
+
+Both live health checks returned 200. Live HTTP probes confirmed JSON 400
+errors for invalid dates, wrong JSON types, malformed bodies, and out-of-range
+amounts. The headless Chrome smoke test verified the live dashboard, visible
+error messages inside both forms, and all five due-day limits. The browser
+used simulated API responses to verify the two purchase notices.

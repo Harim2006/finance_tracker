@@ -5,7 +5,10 @@ from decimal import Decimal
 from calendar import monthrange
 from dateutil.relativedelta import relativedelta
 from database import get_db
-from validation import validate_amount, validate_name, validate_integer, NotFoundError, ConflictError
+from validation import (
+    ConflictError, InputError, NotFoundError, validate_amount, validate_integer,
+    validate_name, validate_text,
+)
 
 
 @contextmanager
@@ -34,10 +37,11 @@ class BillManager:
     def create_bill(self, name, amount, frequency, due_day, category='other'):
         name = validate_name(name)
         amount = validate_amount(amount)
-        if frequency not in self.FREQUENCY_MAP:
-            raise ValueError('Unsupported bill frequency')
+        if not isinstance(frequency, str) or frequency not in self.FREQUENCY_MAP:
+            raise InputError('Unsupported bill frequency')
         max_due_day = dict(self.FREQUENCY_MAP, monthly=31)[frequency]
         due_day = validate_integer(due_day, 1, max_due_day)
+        category = validate_text(category, 'category', nullable=True, max_units=255)
         next_due = self._calculate_next_due_date(frequency, due_day)
         with _cursor(write=True) as cur:
             cur.execute('''INSERT INTO dbo.bills
@@ -75,6 +79,8 @@ class BillManager:
 
     def mark_as_paid(self, bill_id, payment_date=None, amount_paid=None):
         payment_date = self._as_date(payment_date if payment_date is not None else date.today()).isoformat()
+        if amount_paid is not None:
+            amount_paid = validate_amount(amount_paid)
         with _cursor(write=True) as cur:
             cur.execute('SELECT * FROM dbo.bills WITH (UPDLOCK, HOLDLOCK) WHERE id = %s', (bill_id,))
             bill = cur.fetchone()
@@ -82,7 +88,8 @@ class BillManager:
                 raise NotFoundError(f'Bill {bill_id} not found')
             if not bill['active']:
                 raise ConflictError('Bill is inactive')
-            amount_paid = validate_amount(float(bill['amount']) if amount_paid is None else amount_paid)
+            if amount_paid is None:
+                amount_paid = float(bill['amount'])
             cur.execute("""SELECT TOP (1) * FROM dbo.bill_payments WITH (UPDLOCK, HOLDLOCK)
                 WHERE bill_id = %s AND status = 'unpaid' ORDER BY due_date, id""", (bill_id,))
             payment = cur.fetchone()

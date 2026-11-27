@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from decimal import Decimal
 
 from database import get_db
-from validation import validate_amount, validate_name, NotFoundError, ConflictError
+from validation import ConflictError, InputError, NotFoundError, validate_amount, validate_name
 
 
 def _money(value):
@@ -44,7 +44,7 @@ class BudgetEnvelopeManager:
         name = validate_name(name)
         monthly_allocation = _money(validate_amount(monthly_allocation, allow_zero=True))
         if overspend_rule not in ('stop', 'borrow'):
-            raise ValueError('Invalid overspend rule')
+            raise InputError('Invalid overspend rule')
         with _cursor(write=True) as cur:
             cur.execute('SELECT id FROM dbo.envelopes WITH (UPDLOCK, HOLDLOCK) WHERE name = %s', (name,))
             if cur.fetchone():
@@ -118,7 +118,7 @@ class BudgetEnvelopeManager:
         return None
 
     def process_bank_transaction(self, merchant, amount, description=''):
-        merchant = validate_name(merchant)
+        merchant = validate_name(merchant, 'merchant')
         amount = validate_amount(amount)
         envelope_id = self.auto_categorize_transaction(merchant, amount)
         if envelope_id is None:
