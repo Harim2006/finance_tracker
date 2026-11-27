@@ -500,3 +500,150 @@ errors for invalid dates, wrong JSON types, malformed bodies, and out-of-range
 amounts. The headless Chrome smoke test verified the live dashboard, visible
 error messages inside both forms, and all five due-day limits. The browser
 used simulated API responses to verify the two purchase notices.
+
+## Assignment 2 Azure initial setup
+
+### Step 23.1 resource group and static website (November 27, 2026)
+
+Azure CLI confirmed the university sign-in, the existing subscription-level
+Owner role, and an enabled Azure for Students subscription with its spending
+limit on. The deployment guide replaces the period in the IE username
+`hssmallela.ieu2024` with a hyphen for the prefix. It adds `rg-` for the
+resource group and removes hyphens before appending `ui` for storage.
+
+| Setting | Verified value |
+|---------|----------------|
+| `PREFIX` | `hssmallela-ieu2024` |
+| `RESOURCE_GROUP` | `rg-hssmallela-ieu2024` |
+| `UI_STORAGE` | `hssmallelaieu2024ui` |
+| Resource group and storage region | Germany West Central (`germanywestcentral`) |
+| Storage configuration | `StorageV2`, `Standard_LRS`, Hot, HTTPS only, minimum TLS 1.2 |
+| Anonymous blob access | Disabled |
+| Static Website | Enabled with `index.html` |
+| HTTPS endpoint | [hssmallelaieu2024ui.z1.web.core.windows.net](https://hssmallelaieu2024ui.z1.web.core.windows.net/) |
+
+The subscription policy allows Germany West Central, Denmark East, Austria
+East, Italy North, and Switzerland North. Germany West Central offers
+`Standard_LRS` for this subscription without restrictions and reported one
+available Container Apps environment slot. Its Azure SQL capabilities
+response restricted provisioning of `GP_S_Gen5_1` for this subscription.
+Denmark East and Austria East advertised that serverless objective with a
+0.5-vCore minimum. The guide permits a separate SQL region when the free offer
+is unavailable in the main region. SQL region selection and free-offer
+validation remain for the database milestone.
+
+Run the Azure CLI commands from PowerShell with the verified Azure for
+Students subscription selected. The registration and creation checks reuse
+matching resources on rerun.
+
+```powershell
+$account = az account show --query '{id:id,name:name,state:state,signIn:user.name}' --output json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or $account.name -ne 'Azure for Students' -or
+    $account.state -ne 'Enabled' -or ($account.signIn -split '@', 2)[0] -ne 'hssmallela.ieu2024') {
+    throw 'Select the enabled Azure for Students subscription for this assignment.'
+}
+$studentSubscription = $account.id
+$deploymentRegion = 'germanywestcentral'
+$deploymentGroup = 'rg-hssmallela-ieu2024'
+$websiteAccount = 'hssmallelaieu2024ui'
+
+az account show --query '{name:name,state:state}' --output table
+az policy assignment list --scope "/subscriptions/$studentSubscription" `
+    --disable-scope-strict-match true `
+    --query "[?displayName=='Allowed resource deployment regions'].parameters.listOfAllowedLocations.value"
+
+$providers = @('Microsoft.Storage', 'Microsoft.App', 'Microsoft.OperationalInsights',
+               'Microsoft.Sql', 'Microsoft.ManagedIdentity')
+foreach ($provider in $providers) {
+    $state = az provider show --namespace $provider --subscription $studentSubscription `
+        --query registrationState --output tsv
+    if ($LASTEXITCODE -ne 0) { throw "Could not read $provider registration." }
+    if ($state -eq 'NotRegistered') {
+        az provider register --namespace $provider --subscription $studentSubscription --output none
+        if ($LASTEXITCODE -ne 0) { throw "Could not register $provider." }
+    }
+}
+az provider list --subscription $studentSubscription `
+    --query "[?registrationState=='Registered'].namespace" --output table
+az sql db list-editions --location $deploymentRegion --service-objective GP_S_Gen5_1 --available --output json
+```
+
+The final provider list contained all five required names. Wait for this
+before running the resource commands.
+
+```powershell
+$groupExists = az group exists --name $deploymentGroup --subscription $studentSubscription --output tsv
+if ($LASTEXITCODE -ne 0 -or $groupExists -notin @('true', 'false')) { throw 'Could not check the resource group.' }
+if ($groupExists -eq 'true') {
+    $actualRegion = az group show --name $deploymentGroup --subscription $studentSubscription `
+        --query location --output tsv
+    if ($LASTEXITCODE -ne 0 -or $actualRegion -ne $deploymentRegion) {
+        throw 'The existing resource group must match the approved region.'
+    }
+    $existingAccount = az storage account list --resource-group $deploymentGroup `
+        --subscription $studentSubscription --query "[?name=='$websiteAccount'].name" --output tsv
+    if ($LASTEXITCODE -ne 0) { throw 'Could not check the existing storage accounts.' }
+} else {
+    $existingAccount = $null
+}
+
+if (-not $existingAccount) {
+    $nameAvailable = az storage account check-name --name $websiteAccount `
+        --subscription $studentSubscription --query nameAvailable --output tsv
+    if ($LASTEXITCODE -ne 0 -or $nameAvailable -ne 'true') {
+        throw 'The approved storage account name is unavailable.'
+    }
+}
+if ($groupExists -eq 'false') {
+    az group create --name $deploymentGroup --location $deploymentRegion `
+        --subscription $studentSubscription --output none
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create the resource group.' }
+}
+if (-not $existingAccount) {
+    az storage account create --name $websiteAccount --resource-group $deploymentGroup `
+        --location $deploymentRegion --subscription $studentSubscription `
+        --kind StorageV2 --sku Standard_LRS --access-tier Hot --https-only true `
+        --min-tls-version TLS1_2 --allow-blob-public-access false --output none
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create the storage account.' }
+}
+
+$settings = az storage account show --name $websiteAccount --resource-group $deploymentGroup `
+    --subscription $studentSubscription `
+    --query '{location:location,state:provisioningState,kind:kind,sku:sku.name,tier:accessTier,httpsOnly:enableHttpsTrafficOnly,tls:minimumTlsVersion,anonymousBlobs:allowBlobPublicAccess}' `
+    --output json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or $settings.location -ne $deploymentRegion -or
+    $settings.state -ne 'Succeeded' -or $settings.kind -ne 'StorageV2' -or
+    $settings.sku -ne 'Standard_LRS' -or $settings.tier -ne 'Hot' -or
+    $settings.httpsOnly -ne $true -or $settings.tls -notin @('TLS1_2', 'TLS1_3') -or
+    $settings.anonymousBlobs -ne $false) {
+    throw 'The storage account must match the approved settings.'
+}
+
+$website = az storage blob service-properties show --account-name $websiteAccount `
+    --subscription $studentSubscription --auth-mode login --query staticWebsite --output json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'Could not read the Static Website settings.' }
+if ($website.enabled -ne $true -or $website.indexDocument -ne 'index.html') {
+    az storage blob service-properties update --account-name $websiteAccount `
+        --subscription $studentSubscription --auth-mode login --static-website true `
+        --index-document index.html --output none
+    if ($LASTEXITCODE -ne 0) { throw 'Could not enable Static Website hosting.' }
+}
+az storage blob service-properties show --account-name $websiteAccount `
+    --subscription $studentSubscription --auth-mode login --query staticWebsite --output json
+$websiteUrl = az storage account show --name $websiteAccount --resource-group $deploymentGroup `
+    --subscription $studentSubscription --query primaryEndpoints.web --output tsv
+curl.exe --head $websiteUrl
+az resource list --subscription $studentSubscription --query '[].{name:name,type:type,region:location}' --output table
+```
+
+The rerun found the existing group and account with matching settings. Azure
+reported the storage account as the subscription's only resource. The HTTPS
+probe returned `404 WebContentNotFound`, the expected response from the
+enabled, empty website before UI deployment.
+
+Static Website enablement has no separate fee. The empty site is expected to
+cost approximately **USD 0 per month** at idle, with usage charges for storage,
+operations, and applicable outbound transfer. The first-tier Germany West
+Central Hot LRS retail rates observed were USD 0.0196 per GB-month and
+USD 0.054 per 10,000 writes. The subscription spending limit is on.
+[Azure Static Website pricing](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blob-static-website#pricing) · [Azure Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices)

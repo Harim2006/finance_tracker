@@ -190,6 +190,32 @@ financial operations are not retried after a request has begun.
   and service-specific migration URLs, and live Azure SQL verification remains
   pending until the resources exist.
 
+### Step 23.1 resource group and static website
+
+Decided on November 27, 2026.
+
+Use the approved Germany West Central region for the resource group and
+`StorageV2` Hot `Standard_LRS` account. Both passed the Azure for Students
+policy and storage SKU checks. Storage uses HTTPS-only traffic, minimum TLS
+1.2, Microsoft-managed encryption, and disabled anonymous blob access.
+Microsoft Entra login authorized the Static Website configuration under the
+existing Owner role. The public website endpoint is separate from the Blob
+endpoint's anonymous access setting.
+
+Azure registered the five assignment providers. The resource inventory
+contains the single storage account in the intended group. Azure reported
+Static Website enabled with `index.html`, and the public HTTPS endpoint
+returned `404 WebContentNotFound` while the site was empty. Standard Hot
+storage keeps the idle cost close to zero, with charges based on usage.
+
+The subscription's SQL capabilities show a provisioning restriction in
+Germany West Central. Denmark East and Austria East advertise the required
+serverless SKU. The deployment guide's separate SQL region provision keeps
+the approved region viable for the group and static site. SQL region selection
+and free-offer verification belong to the database milestone.
+
+[Provisioning commands and verification](README.md#step-231-resource-group-and-static-website-november-27-2026) · [Azure Static Website access and pricing](https://learn.microsoft.com/en-us/azure/storage/blobs/storage-blob-static-website)
+
 ## 9. Independent OpenAPI contracts for Budget and Bills
 
 Decided on November 27, 2026.
